@@ -15,6 +15,11 @@
   ],
   "license": "MIT",
   "author": "",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/karol-broda/doba",
+    "directory": "packages/doba"
+  },
   "files": [
     "dist"
   ],
