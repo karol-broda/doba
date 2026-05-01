@@ -13,8 +13,9 @@
     "versioning",
     "zod"
   ],
+  "homepage": "https://doba.karolbroda.com",
   "license": "MIT",
-  "author": "",
+  "author": "Karol Broda <me@karolbroda.com> (https://karolbroda.com)",
   "repository": {
     "type": "git",
     "url": "https://github.com/karol-broda/doba",
@@ -57,13 +58,11 @@
     "prepublishOnly": "bun run build && bun run check:publint && bun run check:attw",
     "release": "bumpp"
   },
-  "dependencies": {
-    "bumpp": "11.0.1"
-  },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.17.0",
     "@types/node": "^22.10.0",
     "@vitest/coverage-v8": "^2.1.0",
+    "bumpp": "11.0.1",
     "mitata": "1.0.34",
     "publint": "^0.3.0",
     "tsdown": "^0.18.1",
