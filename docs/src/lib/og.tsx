@@ -13,43 +13,37 @@ let bgData: Buffer | null = null
 
 function loadFont() {
   if (!fontData) {
-    fontData = readFileSync(
-      join(process.cwd(), 'public/instrument-serif-latin-400-italic.woff2'),
-    )
+    fontData = readFileSync(join(process.cwd(), 'public/instrument-serif-latin-400-italic.woff2'))
   }
   return fontData
 }
 
-function loadAssets() {
-  const font = loadFont()
+function loadBg() {
   if (!bgData) {
     bgData = readFileSync(join(process.cwd(), 'public/og-bg.webp'))
   }
-  return { fontData: font, bgData }
+  return bgData
 }
 
 export function getOGFont(): Font {
   return { name: 'Instrument Serif', data: loadFont(), weight: 400, style: 'italic' }
 }
 
-export function createOGResponse(element: React.ReactElement) {
-  const assets = loadAssets()
-  if (!assets.fontData || !assets.bgData) {
-    throw new Error('Failed to load OG assets')
-  }
+export interface OGResponseOptions {
+  width?: number
+  height?: number
+  format?: 'png' | 'webp' | 'jpeg'
+}
 
-  const fonts: Font[] = [
-    { name: 'Instrument Serif', data: assets.fontData, weight: 400, style: 'italic' },
-  ]
-
-  const persistentImages: ImageSource[] = [{ src: 'og-bg', data: assets.bgData }]
+export function createOGResponse(element: React.ReactElement, options?: OGResponseOptions) {
+  const { width = 1200, height = 630, format = 'png' } = options ?? {}
 
   return new ImageResponse(element, {
-    width: 1200,
-    height: 630,
-    format: 'png',
-    fonts,
-    persistentImages,
+    width,
+    height,
+    format,
+    fonts: [getOGFont()],
+    persistentImages: [{ src: 'og-bg', data: loadBg() }] satisfies ImageSource[],
   })
 }
 
@@ -64,7 +58,10 @@ export function OGFrame({ children }: { children: ReactNode }) {
         overflow: 'hidden',
       }}
     >
-      <img src="og-bg" width={1200} height={630} style={{ ...abs, top: 0, left: 0 }} />
+      <img
+        src="og-bg"
+        style={{ ...abs, top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+      />
       {children}
       <div
         style={{

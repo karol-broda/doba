@@ -1,4 +1,6 @@
-# doba
+<p align="center">
+  <img src="docs/public/banner.png" alt="doba - Type-safe schema registry for TypeScript" />
+</p>
 
 Schema registry with flexible transformations. Type-safe migrations between any schemas, errors as values.
 
