@@ -1,6 +1,6 @@
 {
   "name": "dobajs",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Versioned data codec with Standard Schema support",
   "keywords": [
     "arktype",
@@ -54,7 +54,11 @@
     "fmt:check": "oxfmt --check .",
     "check:publint": "publint",
     "check:attw": "attw --pack . --ignore-rules no-resolution cjs-resolves-to-esm",
-    "prepublishOnly": "bun run build && bun run check:publint && bun run check:attw"
+    "prepublishOnly": "bun run build && bun run check:publint && bun run check:attw",
+    "release": "bumpp"
+  },
+  "dependencies": {
+    "bumpp": "11.0.1"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.17.0",
