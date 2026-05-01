@@ -1,0 +1,9 @@
+/* TEAM */
+Developer: Karol Broda
+Site: https://karolbroda.com
+GitHub: https://github.com/karol-broda
+
+/* SITE */
+Software: Next.js, Fumadocs, Tailwind CSS
+Language: TypeScript
+Repository: https://github.com/karol-broda/doba

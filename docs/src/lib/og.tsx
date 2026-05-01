@@ -11,19 +11,25 @@ const serif: CSSProperties = { fontFamily: 'Instrument Serif', fontStyle: 'itali
 let fontData: Buffer | null = null
 let bgData: Buffer | null = null
 
-function loadAssets() {
+function loadFont() {
   if (!fontData) {
     fontData = readFileSync(
-      join(
-        process.cwd(),
-        'node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-400-italic.woff2',
-      ),
+      join(process.cwd(), 'public/instrument-serif-latin-400-italic.woff2'),
     )
   }
+  return fontData
+}
+
+function loadAssets() {
+  const font = loadFont()
   if (!bgData) {
     bgData = readFileSync(join(process.cwd(), 'public/og-bg.webp'))
   }
-  return { fontData, bgData }
+  return { fontData: font, bgData }
+}
+
+export function getOGFont(): Font {
+  return { name: 'Instrument Serif', data: loadFont(), weight: 400, style: 'italic' }
 }
 
 export function createOGResponse(element: React.ReactElement) {

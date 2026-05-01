@@ -1,0 +1,21 @@
+{
+  "name": "doba | Type-safe schema registry",
+  "short_name": "doba",
+  "description": "Schema registry with flexible transformations. Type-safe migrations between any schemas, errors as values.",
+  "start_url": "/",
+  "display": "browser",
+  "background_color": "#0d0a1a",
+  "theme_color": "#0d0a1a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "/apple-icon",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}

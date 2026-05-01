@@ -28,10 +28,25 @@ export const metadata: Metadata = {
   description: siteDescription,
   icons: {
     icon: '/icon.svg',
+    apple: '/apple-icon',
+  },
+  manifest: '/manifest.json',
+  other: {
+    'theme-color': '#0d0a1a',
+    'color-scheme': 'dark',
+    'msapplication-TileColor': '#0d0a1a',
+  },
+  alternates: {
+    types: {
+      'application/atom+xml': '/feed.xml',
+    },
   },
   openGraph: {
     title: 'doba - Type-safe schema registry',
     description: siteDescription,
+    siteName: 'doba',
+    locale: 'en_US',
+    type: 'website',
     images: [{ url: '/og', width: 1200, height: 630 }],
   },
   twitter: {
@@ -51,20 +66,48 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       suppressHydrationWarning
     >
       <head>
+        <link
+          rel="search"
+          type="application/opensearchdescription+xml"
+          title="doba"
+          href="/opensearch.xml"
+        />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
-            __html: JSON.stringify({
-              '@context': 'https://schema.org',
-              '@type': 'SoftwareSourceCode',
-              name: 'doba',
-              description: siteDescription,
-              url: 'https://doba.karolbroda.com',
-              codeRepository: 'https://github.com/karol-broda/doba',
-              programmingLanguage: 'TypeScript',
-              runtimePlatform: 'Bun',
-              license: 'https://opensource.org/licenses/MIT',
-            }),
+            __html: JSON.stringify([
+              {
+                '@context': 'https://schema.org',
+                '@type': 'WebSite',
+                name: 'doba',
+                url: 'https://doba.karolbroda.com',
+                description: siteDescription,
+                potentialAction: {
+                  '@type': 'SearchAction',
+                  target: {
+                    '@type': 'EntryPoint',
+                    urlTemplate: 'https://doba.karolbroda.com/docs?search={search_term_string}',
+                  },
+                  'query-input': 'required name=search_term_string',
+                },
+              },
+              {
+                '@context': 'https://schema.org',
+                '@type': 'SoftwareSourceCode',
+                name: 'doba',
+                description: siteDescription,
+                url: 'https://doba.karolbroda.com',
+                codeRepository: 'https://github.com/karol-broda/doba',
+                programmingLanguage: 'TypeScript',
+                runtimePlatform: 'Bun',
+                license: 'https://opensource.org/licenses/MIT',
+                author: {
+                  '@type': 'Person',
+                  name: 'Karol Broda',
+                  url: 'https://karolbroda.com',
+                },
+              },
+            ]),
           }}
         />
       </head>

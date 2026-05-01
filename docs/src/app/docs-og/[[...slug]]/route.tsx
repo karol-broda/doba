@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation'
 
 export const revalidate = 3600
 
-export async function GET(_req: Request, props: { params: Promise<{ slug: string[] }> }) {
+export async function GET(_req: Request, props: { params: Promise<{ slug?: string[] }> }) {
   const params = await props.params
   const page = source.getPage(params.slug)
   if (!page) {
