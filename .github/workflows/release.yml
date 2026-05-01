@@ -29,6 +29,8 @@ jobs:
 
       - run: bun run ci
 
+      - run: cp README.md packages/doba/README.md
+
       - run: npm publish --provenance --access public
         working-directory: packages/doba
 
