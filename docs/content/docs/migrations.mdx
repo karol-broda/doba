@@ -1,0 +1,184 @@
+---
+title: Migrations
+description: Define type-safe transformations between schemas.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout'
+
+# Migrations
+
+Migrations are functions that transform data from one schema to another. They're the core building block of doba.
+
+## One-way migrations
+
+Migration keys use the `"source->target"` format. The simplest form is a bare function:
+
+```ts
+const registry = createRegistry({
+  schemas: { database: dbSchema, frontend: feSchema, ai: aiSchema },
+  migrations: {
+    'database->frontend': (user) => ({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      // passwordHash stripped
+    }),
+    'database->ai': (user) => ({
+      id: user.id,
+      email: user.email,
+      isAdmin: user.role === 'admin',
+    }),
+  },
+})
+```
+
+<SchemaDiff
+  from="database"
+  to="frontend"
+  fields={[
+    { name: 'id', type: 'string' },
+    { name: 'email', type: 'string' },
+    { name: 'passwordHash', type: 'string', removed: true },
+    { name: 'role', type: 'enum' },
+  ]}
+/>
+
+<Callout>
+  Migration functions receive fully typed input based on the source schema's output type. The return
+  type is checked against the target schema's input type.
+</Callout>
+
+## Migration metadata
+
+For more control, pass an object with a `migrate` function and metadata:
+
+```ts
+migrations: {
+  'v1->v2': {
+    migrate: (data, ctx) => {
+      ctx.defaulted(['email'], 'generated from name')
+      return { ...data, email: `${data.name}@example.com` }
+    },
+    label: 'v1-to-v2-upgrade',   // human-readable name for step info
+    preferred: true,               // cost 0, always chosen over alternatives
+  },
+
+  'v1->v3': {
+    migrate: (data) => ({ /* ... */ }),
+    deprecated: 'prefer v1 -> v2 -> v3 chain',  // cost 1000, emits warning
+  },
+
+  'v3->flat': {
+    migrate: (data) => ({ /* ... */ }),
+    cost: 10,  // explicit edge weight
+  },
+}
+```
+
+| Option       | Type                    | Effect                                                                           |
+| ------------ | ----------------------- | -------------------------------------------------------------------------------- |
+| `migrate`    | `(value, ctx) => value` | The migration function (required unless using `pipe`)                            |
+| `pipe`       | `(builder) => fn`       | Pipe builder callback, types inferred from schemas. See [Helpers](/docs/helpers) |
+| `label`      | `string`                | Human-readable step name, appears in `result.meta.steps`                         |
+| `preferred`  | `boolean`               | Sets cost to 0. Path finder always prefers this edge.                            |
+| `deprecated` | `string \| boolean`     | Sets cost to 1000, emits a warning when used                                     |
+| `cost`       | `number`                | Explicit edge cost (overrides preferred/deprecated)                              |
+
+## Reversible migrations
+
+Use the `<->` syntax to define both directions in a single declaration:
+
+```ts
+migrations: {
+  'database<->frontend': {
+    forward: (user) => ({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+    }),
+    backward: (user, ctx) => {
+      ctx.defaulted(['passwordHash'], 'set to empty string')
+      return {
+        id: user.id,
+        email: user.email,
+        passwordHash: '',
+        role: user.role,
+      }
+    },
+    label: 'db-frontend-sync',
+  },
+}
+```
+
+This registers two directed edges with the same metadata and cost. All metadata options (`label`, `preferred`, `deprecated`, `cost`) work on reversible migrations too.
+
+<Callout type="warn">
+  When both a one-way (`->`) and reversible (`<->`) migration exist for the same direction, the one-way migration takes priority and a warning is emitted.
+</Callout>
+
+## Pipe builder
+
+For migrations that are mostly field shuffling (rename, add, drop, transform), use the `pipe` field instead of writing the function by hand. Types are inferred from the registry schemas -- no generics needed:
+
+```ts
+migrations: {
+  'v1->v2': {
+    pipe: (p) => p
+      .rename('userName', 'name')
+      .map('isAdmin', (v) => v ? 'admin' : 'user')
+      .drop('legacyId')
+      .add('email', 'unknown@example.com'),
+  },
+}
+```
+
+Field names autocomplete, callbacks are typed, and metadata options (`label`, `deprecated`, etc.) work alongside `pipe`. See [Migration Helpers](/docs/helpers) for the full API.
+
+## Async migrations
+
+Migration functions can be async:
+
+```ts
+migrations: {
+  'local->remote': async (data, ctx) => {
+    const enriched = await fetchExtra(data.id)
+    return { ...data, ...enriched }
+  },
+}
+```
+
+## Migration context
+
+Every migration receives a context object as its second argument. See [Context](/docs/context) for full details.
+
+```ts
+migrations: {
+  'legacy->current': (value, ctx) => {
+    ctx.warn('upgrading from legacy format')
+    ctx.defaulted(['settings', 'theme'], 'defaulting to light theme')
+
+    return {
+      ...value,
+      settings: { theme: 'light' },
+    }
+  },
+}
+```
+
+<ResultDemo
+  ok={true}
+  value='{ settings: { theme: "light" }, ... }'
+  meta={{
+    warnings: '["upgrading from legacy format"]',
+    defaults: '[{ path: ["settings","theme"], ... }]',
+  }}
+/>
+
+## Checking migrations
+
+```ts
+registry.hasMigration('database', 'frontend') // true
+registry.hasMigration('frontend', 'database') // false (unless defined)
+```
+
+`hasMigration` only checks direct migrations, not multi-step paths. Use `findPath` to check if any path exists.

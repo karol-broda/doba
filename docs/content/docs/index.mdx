@@ -1,0 +1,128 @@
+---
+title: Introduction
+description: Schema registry with flexible transformations. Type-safe migrations between any schemas, errors as values.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout'
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs'
+
+# Introduction
+
+**doba** is a TypeScript schema registry that lets you define multiple representations of the same data and transform between them with full type safety.
+
+<Callout type="info" title="Standard Schema">
+  doba works with any Standard Schema compliant library: Zod, Valibot, ArkType, and more. No
+  lock-in.
+</Callout>
+
+## Why doba?
+
+Most applications deal with the same data in multiple shapes:
+
+- **Database**: full record with sensitive fields
+- **Frontend**: stripped for the client
+- **AI/LLM**: flattened for context windows
+- **Export**: formatted for data portability
+- **Legacy**: old versions that still need support
+
+doba lets you put all these variants in one registry with migrations between them. It finds the shortest path automatically, validates at each step, and returns typed results with metadata.
+
+<SchemaDiff
+  from="database"
+  to="frontend"
+  fromLabel="Database User"
+  toLabel="Frontend User"
+  fields={[
+    { name: 'id', type: 'string' },
+    { name: 'email', type: 'string' },
+    { name: 'passwordHash', type: 'string', removed: true },
+    { name: 'createdAt', type: 'string' },
+    { name: 'role', type: 'enum' },
+  ]}
+/>
+
+## Key features
+
+<FeatureGrid>
+  <Feature
+    title="Type-safe migrations"
+    description="Full TypeScript inference. Migrations are type-checked at compile time. Input matches source, output matches target."
+    href="/docs/migrations"
+  />
+  <Feature
+    title="Automatic path finding"
+    description="BFS-powered graph traversal finds the shortest path between any two schemas. No manual chaining."
+    href="/docs/path-finding"
+  />
+  <Feature
+    title="Errors as values"
+    description="No try/catch. Every operation returns a discriminated Result type you can check with .ok."
+    href="/docs/api/result"
+  />
+  <Feature
+    title="Migration helpers"
+    description="Type-safe pipe builder for field renaming, mapping, adding, and dropping. No assertions needed."
+    href="/docs/helpers"
+  />
+  <Feature
+    title="Fast"
+    description="~2ns lookups, ~467ns transforms, 2.6M items/sec batch processing. References, not copies."
+    href="/docs/performance"
+  />
+</FeatureGrid>
+
+## Quick example
+
+<Tabs items={["Zod", "Valibot", "ArkType"]} groupId="schema-lib">
+  <Tab value="Zod">
+    ```ts
+    import { createRegistry } from 'dobajs'
+    import { z } from 'zod'
+
+    const registry = createRegistry({
+      schemas: {
+        database: z.object({ id: z.string(), email: z.string(), passwordHash: z.string() }),
+        frontend: z.object({ id: z.string(), email: z.string() }),
+      },
+      migrations: {
+        'database->frontend': (user) => ({ id: user.id, email: user.email }),
+      },
+    })
+    ```
+
+  </Tab>
+  <Tab value="Valibot">
+    ```ts
+    import { createRegistry } from 'dobajs'
+    import * as v from 'valibot'
+
+    const registry = createRegistry({
+      schemas: {
+        database: v.object({ id: v.string(), email: v.string(), passwordHash: v.string() }),
+        frontend: v.object({ id: v.string(), email: v.string() }),
+      },
+      migrations: {
+        'database->frontend': (user) => ({ id: user.id, email: user.email }),
+      },
+    })
+    ```
+
+  </Tab>
+  <Tab value="ArkType">
+    ```ts
+    import { createRegistry } from 'dobajs'
+    import { type } from 'arktype'
+
+    const registry = createRegistry({
+      schemas: {
+        database: type({ id: 'string', email: 'string', passwordHash: 'string' }),
+        frontend: type({ id: 'string', email: 'string' }),
+      },
+      migrations: {
+        'database->frontend': (user) => ({ id: user.id, email: user.email }),
+      },
+    })
+    ```
+
+  </Tab>
+</Tabs>

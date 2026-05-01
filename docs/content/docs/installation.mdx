@@ -1,0 +1,94 @@
+---
+title: Installation
+description: Install doba and get up and running in seconds.
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs'
+import { Callout } from 'fumadocs-ui/components/callout'
+import { Step, Steps } from 'fumadocs-ui/components/steps'
+
+# Installation
+
+<Steps>
+
+<Step>
+
+## Install doba
+
+<Tabs items={['bun', 'npm', 'pnpm', 'yarn']} groupId="pkg" persist>
+  <Tab value="bun">```bash bun add dobajs ```</Tab>
+  <Tab value="npm">```bash npm install dobajs ```</Tab>
+  <Tab value="pnpm">```bash pnpm add dobajs ```</Tab>
+  <Tab value="yarn">```bash yarn add dobajs ```</Tab>
+</Tabs>
+
+</Step>
+
+<Step>
+
+## Install a schema library
+
+doba works with any [Standard Schema](https://github.com/standard-schema/standard-schema) compliant library. Pick one:
+
+<Tabs items={['Zod', 'Valibot', 'ArkType']} groupId="schema-lib" persist>
+  <Tab value="Zod">
+    <Tabs items={['bun', 'npm', 'pnpm', 'yarn']} groupId="pkg" persist>
+      <Tab value="bun">```bash bun add zod ```</Tab>
+      <Tab value="npm">```bash npm install zod ```</Tab>
+      <Tab value="pnpm">```bash pnpm add zod ```</Tab>
+      <Tab value="yarn">```bash yarn add zod ```</Tab>
+    </Tabs>
+  </Tab>
+  <Tab value="Valibot">
+    <Tabs items={['bun', 'npm', 'pnpm', 'yarn']} groupId="pkg" persist>
+      <Tab value="bun">```bash bun add valibot ```</Tab>
+      <Tab value="npm">```bash npm install valibot ```</Tab>
+      <Tab value="pnpm">```bash pnpm add valibot ```</Tab>
+      <Tab value="yarn">```bash yarn add valibot ```</Tab>
+    </Tabs>
+  </Tab>
+  <Tab value="ArkType">
+    <Tabs items={['bun', 'npm', 'pnpm', 'yarn']} groupId="pkg" persist>
+      <Tab value="bun">```bash bun add arktype ```</Tab>
+      <Tab value="npm">```bash npm install arktype ```</Tab>
+      <Tab value="pnpm">```bash pnpm add arktype ```</Tab>
+      <Tab value="yarn">```bash yarn add arktype ```</Tab>
+    </Tabs>
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step>
+
+## Create your first registry
+
+```ts title="registry.ts"
+import { createRegistry } from 'dobajs'
+
+const registry = createRegistry({
+  schemas: {
+    /* your schemas */
+  },
+  migrations: {
+    /* your migrations */
+  },
+})
+```
+
+Head to [Quick Start](/docs/quick-start) for a full walkthrough.
+
+</Step>
+
+</Steps>
+
+## Requirements
+
+- TypeScript 5.0+
+- ESM (doba is ESM-only)
+- Any Standard Schema compliant library (Zod, Valibot, ArkType, etc.)
+
+<Callout type="info">
+  doba has **zero runtime dependencies**. The only peer requirement is your schema library of
+  choice.
+</Callout>

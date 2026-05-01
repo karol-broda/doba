@@ -1,0 +1,192 @@
+---
+title: With Zod
+description: Using doba with Zod schemas, versioned migrations, and path finding.
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs'
+import { Callout } from 'fumadocs-ui/components/callout'
+import { Step, Steps } from 'fumadocs-ui/components/steps'
+
+A full example using [Zod](https://zod.dev) for schema validation, including nested objects, schema versioning, and multi-hop path finding.
+
+## Setup
+
+<Steps>
+
+<Step>
+### Define your schemas
+
+Each schema represents a shape your data can take. Here we have a database layer with internal fields, a clean frontend shape, an AI-friendly projection, and two frontend versions.
+
+```ts
+import { z } from 'zod'
+import { createRegistry } from 'dobajs'
+
+const databaseUser = z.object({
+  id: z.string(),
+  email: z.string().email(),
+  passwordHash: z.string(),
+  createdAt: z.string().datetime(),
+  settings: z.object({
+    theme: z.enum(['light', 'dark']),
+    notifications: z.object({
+      email: z.boolean(),
+      push: z.boolean(),
+      sms: z.boolean(),
+    }),
+    internal: z.object({
+      lastLoginIp: z.string(),
+      failedAttempts: z.number(),
+    }),
+  }),
+})
+
+const frontendUser = z.object({
+  id: z.string(),
+  email: z.string().email(),
+  createdAt: z.string().datetime(),
+  settings: z.object({
+    theme: z.enum(['light', 'dark']),
+    notifications: z.object({
+      email: z.boolean(),
+      push: z.boolean(),
+      sms: z.boolean(),
+    }),
+  }),
+})
+
+const aiUser = z.object({
+  id: z.string(),
+  email: z.string(),
+  theme: z.string(),
+  notificationsEnabled: z.boolean(),
+})
+
+const frontendV1 = z.object({
+  id: z.string(),
+  email: z.string(),
+  theme: z.string(),
+})
+
+const frontendV2 = z.object({
+  id: z.string(),
+  email: z.string(),
+  createdAt: z.string().datetime(),
+  settings: z.object({
+    theme: z.enum(['light', 'dark']),
+    notifications: z.object({
+      email: z.boolean(),
+      push: z.boolean(),
+      sms: z.boolean(),
+    }),
+  }),
+})
+```
+
+</Step>
+
+<Step>
+### Write migrations
+
+Migrations connect schemas. doba builds a graph and finds the shortest path automatically.
+
+```ts
+const registry = createRegistry({
+  schemas: {
+    database: databaseUser,
+    frontend: frontendUser,
+    ai: aiUser,
+    'frontend:v1': frontendV1,
+    'frontend:v2': frontendV2,
+  },
+  migrations: {
+    'database->frontend': (user) => ({
+      id: user.id,
+      email: user.email,
+      createdAt: user.createdAt,
+      settings: {
+        theme: user.settings.theme,
+        notifications: user.settings.notifications,
+      },
+    }),
+    'database->ai': (user) => ({
+      id: user.id,
+      email: user.email,
+      theme: user.settings.theme,
+      notificationsEnabled:
+        user.settings.notifications.email ||
+        user.settings.notifications.push ||
+        user.settings.notifications.sms,
+    }),
+    'frontend->ai': (user) => ({
+      id: user.id,
+      email: user.email,
+      theme: user.settings.theme,
+      notificationsEnabled:
+        user.settings.notifications.email ||
+        user.settings.notifications.push ||
+        user.settings.notifications.sms,
+    }),
+    'frontend:v1->frontend:v2': (user, ctx) => {
+      ctx.defaulted(['settings', 'notifications'], 'defaulting all to true')
+      ctx.warn('createdAt set to current timestamp')
+      return {
+        id: user.id,
+        email: user.email,
+        createdAt: new Date().toISOString(),
+        settings: {
+          theme: user.theme === 'light' || user.theme === 'dark' ? user.theme : 'light',
+          notifications: { email: true, push: true, sms: false },
+        },
+      }
+    },
+    'frontend:v2->frontend:v1': (user) => ({
+      id: user.id,
+      email: user.email,
+      theme: user.settings.theme,
+    }),
+    'frontend->frontend:v2': (user) => user,
+    'frontend:v2->frontend': (user) => user,
+  },
+})
+```
+
+</Step>
+
+<Step>
+### Transform data
+
+```ts
+const dbUser = {
+  id: 'user-123',
+  email: 'alice@example.com',
+  passwordHash: 'hashed_password_xyz',
+  createdAt: '2024-01-15T10:30:00Z',
+  settings: {
+    theme: 'dark' as const,
+    notifications: { email: true, push: false, sms: false },
+    internal: { lastLoginIp: '192.168.1.1', failedAttempts: 0 },
+  },
+}
+
+// Direct migration
+const frontend = await registry.transform(dbUser, 'database', 'frontend')
+
+// Multi-hop: frontend:v1 -> frontend:v2 -> frontend -> ai
+const v1User = { id: 'u-1', email: 'bob@example.com', theme: 'dark' }
+const ai = await registry.transform(v1User, 'frontend:v1', 'ai')
+
+if (ai.ok) {
+  console.log(ai.value) // { id, email, theme, notificationsEnabled }
+  console.log(ai.meta.path) // ["frontend:v1", "frontend:v2", "frontend", "ai"]
+}
+```
+
+</Step>
+
+</Steps>
+
+<Callout type="info">
+  Path finding is automatic. You don't need to specify intermediate schemas. doba finds the shortest
+  route through the graph using BFS.
+</Callout>

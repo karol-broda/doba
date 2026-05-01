@@ -1,0 +1,236 @@
+---
+title: Debugging
+description: Tools for understanding what your registry is doing and why.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout'
+
+# Debugging
+
+When something goes wrong, you want the tools to tell you what happened, not just "no". doba gives you several ways to see what's going on.
+
+## debug mode
+
+The fastest way to see what's happening. Pass `debug: true` to `createRegistry` and it logs everything to the console with a `[doba]` prefix.
+
+```ts
+const registry = createRegistry({
+  schemas: {
+    /* ... */
+  },
+  migrations: {
+    /* ... */
+  },
+  debug: true,
+})
+```
+
+Then just run your code:
+
+```
+[doba] warn v1->v2: defaulted email: generated from name
+[doba]   step 1/2 v1->v2 "add-email" [ok] 0.5ms
+[doba]   step 2/2 v2->v3 "rename-fields" [ok] 0.0ms
+[doba] transform v1->v3 [ok] 4.6ms (v1 -> v2 -> v3)
+```
+
+That's it. Warnings, per-step timing, the full path it took, and whether it worked. If you have your own hooks defined, they still fire too. Debug mode just adds the console output on top.
+
+Turn it off when you're done. Or leave it on during development, whatever works for you.
+
+## explain()
+
+The `explain` method gives you a full breakdown of what path the registry would take between two schemas, without actually running any migrations.
+
+```ts
+const info = registry.explain('v1', 'v3')
+
+console.log(info.summary)
+// Path: v1 -> v2 -> v3 (2 steps, total cost: 0)
+//   1. v1 -> v2 (cost: 0) [v1-to-v2-upgrade]
+//   2. v2 -> v3 (cost: 0) [v2-to-v3-upgrade]
+```
+
+### What you get back
+
+```ts
+type ExplainResult = {
+  from: string
+  to: string
+  path: string[] | null // the resolved path, or null
+  totalCost: number | null // sum of edge costs
+  steps: ExplainStep[] // per-step breakdown
+  summary: string // human-readable summary
+}
+
+type ExplainStep = {
+  from: string
+  to: string
+  cost: number
+  label?: string // from migration metadata
+  deprecated?: string | boolean
+}
+```
+
+### When there's no path
+
+Instead of just "no path found", it tells you what IS reachable and what's missing:
+
+```ts
+const info = registry.explain('v3', 'v1')
+
+console.log(info.summary)
+// No migration path from "v3" to "v1".
+// Reachable from "v3": flat.
+// No schema has a path to "v1".
+```
+
+That immediately tells you: v3 can only go to flat, and nothing points at v1. You know exactly which migration to add.
+
+### Same schema
+
+```ts
+registry.explain('v2', 'v2')
+// { summary: '"v2" is already the target schema.', totalCost: 0, steps: [] }
+```
+
+## Better error messages
+
+When a transform fails because no path exists, the error now includes the same reachability info that `explain` provides.
+
+```ts
+const result = await registry.transform(data, 'v3', 'v1')
+
+if (!result.ok) {
+  console.log(result.issues[0].message)
+  // no migration path from "v3" to "v1".
+  // schemas reachable from "v3": flat;
+  // no schema has a migration path to "v1"
+
+  console.log(result.issues[0].meta)
+  // {
+  //   reachableFromSource: ['flat'],
+  //   reachableToTarget: []
+  // }
+}
+```
+
+The `meta` field gives you the raw arrays if you want to do something programmatic with them. The `message` has it all in a readable format.
+
+<Callout type="info">
+  The reachability info is computed on demand when an error occurs, not upfront. It adds no overhead
+  to successful transforms.
+</Callout>
+
+## Lifecycle hooks
+
+Hooks let you observe what the registry is doing without touching migration code. They're good for logging, metrics, or just figuring out why something is slow.
+
+### onTransform
+
+Called after every transform completes, whether it succeeded or failed.
+
+```ts
+const registry = createRegistry({
+  schemas: {
+    /* ... */
+  },
+  migrations: {
+    /* ... */
+  },
+  hooks: {
+    onTransform: (info) => {
+      console.log(
+        `${info.from} -> ${info.to} [${info.ok ? 'ok' : 'fail'}] ${info.durationMs.toFixed(1)}ms`,
+      )
+    },
+  },
+})
+```
+
+```ts
+type TransformHookInfo = {
+  from: string
+  to: string
+  path: string[] | null // resolved path (null on early errors)
+  durationMs: number // wall clock time for the whole transform
+  ok: boolean // did it succeed?
+}
+```
+
+### onStep
+
+Called after each individual migration step. Useful for finding which step in a long chain is slow or failing.
+
+```ts
+hooks: {
+  onStep: (info) => {
+    const tag = info.label ? ` (${info.label})` : ''
+    console.log(`  step ${info.index + 1}/${info.total}: ${info.from} -> ${info.to}${tag} ${info.durationMs.toFixed(1)}ms`)
+  },
+}
+```
+
+```ts
+type StepHookInfo = {
+  from: string
+  to: string
+  index: number // zero-based step index
+  total: number // total number of steps
+  label?: string // from migration metadata
+  durationMs: number // wall clock time for this step
+  ok: boolean // did this step succeed?
+}
+```
+
+### onWarning
+
+Called when warnings are emitted from `ctx.warn()`, `ctx.defaulted()`, deprecated migration usage, or migration conflicts at construction time.
+
+```ts
+hooks: {
+  onWarning: (message, from, to) => {
+    console.log(`[${from}->${to}] ${message}`)
+  },
+}
+```
+
+### Putting it together
+
+Here's a minimal logging setup that gives you good visibility:
+
+```ts
+const registry = createRegistry({
+  schemas: {
+    /* ... */
+  },
+  migrations: {
+    /* ... */
+  },
+  hooks: {
+    onTransform: ({ from, to, ok, durationMs, path }) => {
+      const status = ok ? 'ok' : 'FAIL'
+      const route = path ? path.join(' -> ') : 'no path'
+      console.log(`[transform] ${from} -> ${to} [${status}] ${durationMs.toFixed(1)}ms (${route})`)
+    },
+    onStep: ({ from, to, index, total, label, durationMs }) => {
+      const tag = label ? ` "${label}"` : ''
+      console.log(
+        `  [step ${index + 1}/${total}] ${from} -> ${to}${tag} ${durationMs.toFixed(1)}ms`,
+      )
+    },
+    onWarning: (msg, from, to) => {
+      console.log(`  [warn] ${from} -> ${to}: ${msg}`)
+    },
+  },
+})
+```
+
+Output looks something like:
+
+```
+  [warn] v1 -> v2: defaulted email: generated from name
+  [step 1/2] v1 -> v2 "add-email" 0.5ms
+  [step 2/2] v2 -> v3 "rename-fields" 0.0ms
+[transform] v1 -> v3 [ok] 4.6ms (v1 -> v2 -> v3)
+```

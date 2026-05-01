@@ -1,0 +1,129 @@
+---
+title: Schemas
+description: Define schema variants for different representations of your data.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout'
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs'
+
+# Schemas
+
+Schemas in doba aren't just versioned. They represent **different views** of the same data. A database record, a frontend payload, and an AI context window are all schemas.
+
+## Defining schemas
+
+Pass a map of named schemas to `createRegistry`. Each key becomes a schema identifier used in transforms and migrations.
+
+<Tabs items={["Zod", "Valibot", "ArkType"]} groupId="schema-lib">
+  <Tab value="Zod">
+    ```ts
+    import { createRegistry } from 'dobajs'
+    import { z } from 'zod'
+
+    const registry = createRegistry({
+      schemas: {
+        database: z.object({
+          id: z.string(),
+          email: z.string(),
+          passwordHash: z.string(),
+          role: z.enum(['admin', 'user']),
+        }),
+        frontend: z.object({
+          id: z.string(),
+          email: z.string(),
+          role: z.enum(['admin', 'user']),
+        }),
+      },
+      migrations: { /* ... */ },
+    })
+    ```
+
+  </Tab>
+  <Tab value="Valibot">
+    ```ts
+    import { createRegistry } from 'dobajs'
+    import * as v from 'valibot'
+
+    const registry = createRegistry({
+      schemas: {
+        database: v.object({
+          id: v.string(),
+          email: v.string(),
+          passwordHash: v.string(),
+          role: v.picklist(['admin', 'user']),
+        }),
+        frontend: v.object({
+          id: v.string(),
+          email: v.string(),
+          role: v.picklist(['admin', 'user']),
+        }),
+      },
+      migrations: { /* ... */ },
+    })
+    ```
+
+  </Tab>
+  <Tab value="ArkType">
+    ```ts
+    import { createRegistry } from 'dobajs'
+    import { type } from 'arktype'
+
+    const registry = createRegistry({
+      schemas: {
+        database: type({
+          id: 'string',
+          email: 'string',
+          passwordHash: 'string',
+          role: "'admin' | 'user'",
+        }),
+        frontend: type({
+          id: 'string',
+          email: 'string',
+          role: "'admin' | 'user'",
+        }),
+      },
+      migrations: { /* ... */ },
+    })
+    ```
+
+  </Tab>
+</Tabs>
+
+## Schema variants vs versions
+
+doba treats all schemas equally. Whether they represent different contexts or different versions, the API is the same:
+
+```ts
+const registry = createRegistry({
+  schemas: {
+    // Different representations
+    database: databaseSchema,
+    frontend: frontendSchema,
+    ai: aiSchema,
+    export: exportSchema,
+
+    // Different versions
+    v1: legacySchema,
+    v2: currentSchema,
+  },
+  migrations: {
+    /* ... */
+  },
+})
+```
+
+## Checking schemas
+
+```ts
+registry.has('database') // true
+registry.has('unknown') // false (type error at compile time)
+```
+
+<Callout type="info">
+  Schema keys are fully typed. Passing an unknown key to `has()`, `transform()`, or `validate()` is
+  a compile-time error.
+</Callout>
+
+## Standard Schema support
+
+doba uses the [Standard Schema](https://github.com/standard-schema/standard-schema) interface, so it works with any compliant library. You can mix libraries in the same registry, but sticking with one is simpler.

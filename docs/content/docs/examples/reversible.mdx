@@ -1,0 +1,112 @@
+---
+title: Reversible Migrations
+description: Bidirectional migrations with the database<->frontend syntax.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout'
+
+doba supports reversible (bidirectional) migrations using the `<->` arrow syntax. Define both `forward` and `backward` transforms in one declaration.
+
+## Full example
+
+```ts
+import { z } from 'zod'
+import { createRegistry } from 'dobajs'
+
+const databaseUser = z.object({
+  id: z.string(),
+  email: z.string().email(),
+  passwordHash: z.string(),
+  createdAt: z.string().datetime(),
+  role: z.enum(['admin', 'user']),
+})
+
+const frontendUser = z.object({
+  id: z.string(),
+  email: z.string().email(),
+  createdAt: z.string().datetime(),
+  role: z.enum(['admin', 'user']),
+})
+
+const aiUser = z.object({
+  id: z.string(),
+  email: z.string(),
+  isAdmin: z.boolean(),
+})
+
+const registry = createRegistry({
+  schemas: {
+    database: databaseUser,
+    frontend: frontendUser,
+    ai: aiUser,
+  },
+  migrations: {
+    // Reversible migration: both directions in one declaration
+    'database<->frontend': {
+      forward: (user) => ({
+        id: user.id,
+        email: user.email,
+        createdAt: user.createdAt,
+        role: user.role,
+      }),
+      backward: (user, ctx) => {
+        ctx.defaulted(['passwordHash'], 'set to empty string')
+        return {
+          id: user.id,
+          email: user.email,
+          passwordHash: '',
+          createdAt: user.createdAt,
+          role: user.role,
+        }
+      },
+      label: 'db-frontend-sync',
+    },
+
+    // One-way migration
+    'frontend->ai': (user) => ({
+      id: user.id,
+      email: user.email,
+      isAdmin: user.role === 'admin',
+    }),
+  },
+})
+```
+
+## Usage
+
+```ts
+const dbUser = {
+  id: 'user-123',
+  email: 'alice@example.com',
+  passwordHash: 'hashed_abc',
+  createdAt: '2024-01-15T10:30:00Z',
+  role: 'admin' as const,
+}
+
+// Forward: database -> frontend
+const frontend = await registry.transform(dbUser, 'database', 'frontend')
+
+// Backward: frontend -> database
+const feUser = {
+  id: 'user-123',
+  email: 'alice@example.com',
+  createdAt: '2024-01-15T10:30:00Z',
+  role: 'admin' as const,
+}
+const db = await registry.transform(feUser, 'frontend', 'database')
+
+if (db.ok) {
+  console.log(db.value) // includes passwordHash: ""
+  console.log(db.meta.defaults) // [{ path: ["passwordHash"], message: "..." }]
+}
+
+// Multi-hop: database -> frontend -> ai
+const ai = await registry.transform(dbUser, 'database', 'ai')
+if (ai.ok) {
+  console.log(ai.meta.path) // ["database", "frontend", "ai"]
+}
+```
+
+<Callout type="info">
+When both a one-way (`->`) and reversible (`<->`) migration exist for the same direction, the one-way migration takes priority.
+</Callout>

@@ -1,0 +1,92 @@
+---
+title: Context
+description: Migration context and utilities
+---
+
+Every migration function receives a `TransformContext` as its second argument. This context allows you to interact with the migration process beyond just returning a value.
+
+## TransformContext
+
+```ts
+type TransformContext<Keys extends string = string> = {
+  readonly warn: (message: string) => void
+  readonly defaulted: (path: readonly PropertyKey[], message: string) => void
+  readonly from: string
+  readonly to: string
+}
+```
+
+### warn()
+
+Emits a warning that gets collected in the transform metadata. Also triggers the `onWarning` hook if configured.
+
+```ts
+'v1->v2': (data, ctx) => {
+  if (!data.email) {
+    ctx.warn('User has no email, using empty string')
+  }
+  return { ...data, email: data.email || '' }
+}
+```
+
+### defaulted()
+
+Records that a field was filled with a default value. Takes a property path and a message. This also triggers the `onWarning` hook with a formatted message.
+
+```ts
+ctx.defaulted(['settings', 'theme'], 'Theme not found, defaulting to "light"')
+ctx.defaulted(['address', 'zip'], 'ZIP code not in source, using 00000')
+```
+
+### from / to
+
+The schema keys for the current migration step:
+
+```ts
+'a->b': (value, ctx) => {
+  console.log(ctx.from) // "a"
+  console.log(ctx.to)   // "b"
+  return { /* ... */ }
+}
+```
+
+## Result metadata types
+
+Warnings and defaults are collected on the transform result:
+
+### WarningInfo
+
+```ts
+type WarningInfo = {
+  readonly message: string
+  readonly from: string // schema the warning was emitted from
+  readonly to: string // schema the warning was emitted to
+}
+```
+
+### DefaultedInfo
+
+```ts
+type DefaultedInfo = {
+  readonly path: readonly PropertyKey[] // property path that was defaulted
+  readonly message: string
+  readonly from: string
+  readonly to: string
+}
+```
+
+### Accessing metadata
+
+```ts
+const result = await registry.transform(data, 'legacy', 'current')
+
+if (result.ok) {
+  for (const warning of result.meta.warnings) {
+    console.log(`[${warning.from}->${warning.to}] ${warning.message}`)
+  }
+
+  for (const d of result.meta.defaults) {
+    console.log(`Defaulted ${d.path.join('.')}: ${d.message}`)
+  }
+}
+```

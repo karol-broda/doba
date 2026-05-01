@@ -1,0 +1,101 @@
+---
+title: Migration Context
+description: Track warnings, defaults, and metadata through migrations.
+---
+
+# Migration Context
+
+Every migration function receives a context object as its second argument. Use it to track decisions and surface them in the result metadata.
+
+## Warnings
+
+Log non-critical information about the migration:
+
+```ts
+'legacy->current': (value, ctx) => {
+  ctx.warn('upgrading from legacy format, some fields may be approximate')
+  return { /* ... */ }
+}
+```
+
+Warnings appear in `result.meta.warnings` as `WarningInfo` objects:
+
+```ts
+const result = await registry.transform(data, 'legacy', 'current')
+if (result.ok) {
+  for (const warning of result.meta.warnings) {
+    console.log(warning.message) // "upgrading from legacy format..."
+    console.log(warning.from) // "legacy"
+    console.log(warning.to) // "current"
+  }
+}
+```
+
+<ResultDemo
+  ok={true}
+  value="{ ... }"
+  meta={{
+    'warnings[0].message': '"upgrading from legacy format..."',
+    'warnings[0].from': '"legacy"',
+    'warnings[0].to': '"current"',
+  }}
+/>
+
+## Defaulted values
+
+Track when you're filling in values that weren't in the source:
+
+```ts
+'frontend->database': (data, ctx) => {
+  ctx.defaulted(['passwordHash'], 'set to empty string')
+  ctx.defaulted(['settings', 'internal'], 'internal settings not available')
+  return { ...data, passwordHash: '', settings: { ...data.settings, internal: { /* ... */ } } }
+}
+```
+
+Access in `result.meta.defaults` as `DefaultedInfo` objects:
+
+```ts
+if (result.ok) {
+  for (const d of result.meta.defaults) {
+    console.log(d.path) // ["passwordHash"] or ["settings", "internal"]
+    console.log(d.message) // "set to empty string"
+    console.log(d.from) // "frontend"
+    console.log(d.to) // "database"
+  }
+}
+```
+
+## Migration info
+
+The context exposes which schemas the current step is migrating between:
+
+```ts
+'a->b': (value, ctx) => {
+  console.log(ctx.from) // "a"
+  console.log(ctx.to)   // "b"
+  return { /* ... */ }
+}
+```
+
+## Hooks
+
+Warnings (from both `ctx.warn()` and `ctx.defaulted()`) trigger the registry-level `onWarning` hook:
+
+```ts
+const registry = createRegistry({
+  schemas: {
+    /* ... */
+  },
+  migrations: {
+    /* ... */
+  },
+  hooks: {
+    onWarning: (message, from, to) => {
+      console.log(`[${from}->${to}] ${message}`)
+    },
+  },
+})
+```
+
+doba also provides `onTransform` and `onStep` hooks for observing transform execution with timing data. See [Debugging](/docs/debugging) for details.

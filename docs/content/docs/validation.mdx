@@ -1,0 +1,74 @@
+---
+title: Validation
+description: Control when and how doba validates your data.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout'
+
+# Validation
+
+doba validates data against your schemas during transforms. You control the strategy.
+
+## Validation strategies
+
+### `end` (default)
+
+Validates only the final result after all migrations have run. Best for production where you trust your migrations.
+
+```ts
+await registry.transform(data, 'a', 'b', { validate: 'end' })
+```
+
+### `each`
+
+Validates after every intermediate migration step. If a multi-hop transform produces invalid data, you'll see exactly which step broke.
+
+```ts
+await registry.transform(data, 'a', 'd', { validate: 'each' })
+```
+
+### `none`
+
+Skips all validation. Use when you've verified your migrations and want maximum performance.
+
+```ts
+await registry.transform(data, 'a', 'b', { validate: 'none' })
+```
+
+## Path validation
+
+The `validatePath` option checks that every step in the resolved path has a registered migration before executing any transforms:
+
+```ts
+await registry.transform(data, 'a', 'd', {
+  path: ['a', 'b', 'c', 'd'],
+  validatePath: true,
+})
+```
+
+This is useful when passing explicit paths to catch typos or missing migrations early.
+
+## Standalone validation
+
+Validate any value against a specific schema without transforming:
+
+```ts
+const result = await registry.validate(data, 'frontend')
+
+if (result.ok) {
+  result.value // validated and typed
+  result.meta.schema // "frontend"
+} else {
+  result.issues // DobaIssue[]
+}
+```
+
+<ResultDemo
+  ok={false}
+  issues={['Expected string, received number at "id"', 'Required at "email"']}
+/>
+
+<Callout type="warn">
+  Using `validate: 'none'` means doba won't catch malformed data. Only use this when you trust both
+  input and migrations completely.
+</Callout>

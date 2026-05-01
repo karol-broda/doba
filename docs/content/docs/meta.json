@@ -1,0 +1,30 @@
+{
+  "title": "Documentation",
+  "root": true,
+  "pages": [
+    "index",
+    "---Getting Started---",
+    "installation",
+    "quick-start",
+    "---Core Concepts---",
+    "schemas",
+    "migrations",
+    "path-finding",
+    "---Guides---",
+    "validation",
+    "context",
+    "helpers",
+    "debugging",
+    "performance",
+    "---Examples---",
+    "examples/with-zod",
+    "examples/with-valibot",
+    "examples/with-arktype",
+    "examples/reversible",
+    "examples/weighted",
+    "---API Reference---",
+    "api/registry",
+    "api/result",
+    "api/context"
+  ]
+}

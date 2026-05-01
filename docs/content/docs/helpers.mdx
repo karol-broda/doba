@@ -1,0 +1,196 @@
+---
+title: Migration Helpers
+description: Type-safe utilities for common schema transformations.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout'
+
+# Migration Helpers
+
+Most migrations are just shuffling fields around. Renaming one, dropping another, adding a default. Writing that by hand every time gets old fast.
+
+doba ships a `pipe` builder that handles the common cases with full type safety. Field names autocomplete, callbacks are typed, and TypeScript catches mismatches at compile time. No type assertions needed.
+
+## Inline pipe (recommended)
+
+Use the `pipe` field directly in your migration definition. The input and target types are inferred from the registry schemas automatically -- no generics needed.
+
+```ts
+import { createRegistry } from 'dobajs'
+import { z } from 'zod'
+
+const v1 = z.object({ userName: z.string(), isAdmin: z.boolean(), legacyId: z.number() })
+const v2 = z.object({ name: z.string(), role: z.enum(['admin', 'user']), email: z.string() })
+
+const registry = createRegistry({
+  schemas: { v1, v2 },
+  migrations: {
+    'v1->v2': {
+      pipe: (p) =>
+        p
+          .rename('userName', 'name')
+          .map('isAdmin', (v) => (v ? 'admin' : 'user'))
+          .rename('isAdmin', 'role')
+          .drop('legacyId')
+          .add('email', 'unknown@example.com'),
+    },
+  },
+})
+```
+
+The callback receives a `PipeBuilder` that already knows the input type (`V1`) and the target type (`V2`) from the migration key and schema map. Every step knows the current shape. `.rename('userName', 'name')` autocompletes `'userName'` from the input fields. `.map('isAdmin', (v) => ...)` gives you `v: boolean`. If the final shape doesn't match the target schema, TypeScript tells you at the definition site.
+
+Since `pipe` uses the object form, you can attach metadata alongside it:
+
+```ts
+'v1->v2': {
+  pipe: (p) => p.rename('userName', 'name').add('email', 'unknown@example.com'),
+  label: 'rename and add email',
+  deprecated: 'use v1->v3 instead',
+  cost: 5,
+}
+```
+
+## Standalone pipe
+
+If you need a pipe outside of a registry definition (e.g. inside a custom migration function, or in tests), use `pipe<InputType>()` with an explicit generic.
+
+```ts
+import { pipe } from 'dobajs'
+
+type V1 = { userName: string; isAdmin: boolean; legacyId: number }
+
+const migrate = pipe<V1>()
+  .rename('userName', 'name')
+  .drop('legacyId')
+  .add('email', 'unknown@example.com')
+
+// use as a migration function directly
+const registry = createRegistry({
+  schemas: { v1, v2 },
+  migrations: {
+    'v1->v2': migrate,
+  },
+})
+```
+
+<Callout type="info">
+  Prefer the inline `pipe` field when defining migrations inside `createRegistry`. It infers types
+  from the schemas so you don't need to pass generics manually.
+</Callout>
+
+## Builder methods
+
+### .rename(from, to)
+
+Moves a field to a new key. Both field names autocomplete.
+
+```ts
+pipe<{ userName: string; age: number }>().rename('userName', 'name')
+// shape is now { name: string; age: number }
+```
+
+### .add(name, defaultValue)
+
+Adds a field with a default value. Calls `ctx.defaulted()` automatically so it shows up in your transform metadata. If the field already exists, it gets skipped.
+
+The second argument can be a static value or a factory function. Literal types are preserved, so `'user'` stays as `'user'`, not `string`.
+
+```ts
+pipe<{ name: string }>()
+  .add('role', 'user') // role: "user"
+  .add('createdAt', () => new Date().toISOString()) // createdAt: string
+```
+
+<ResultDemo
+  ok={true}
+  value='{ name: "Alice", role: "user", createdAt: "..." }'
+  meta={{
+    'defaults[0].path': '["role"]',
+    'defaults[0].message': '"added with default"',
+  }}
+/>
+
+### .drop(...names)
+
+Removes one or more fields. Only accepts fields that exist on the current shape.
+
+```ts
+pipe<{ name: string; password: string; hash: string }>().drop('password', 'hash')
+// shape is now { name: string }
+```
+
+### .map(name, fn)
+
+Transforms a single field's value. The callback receives the field's actual type, so you get proper autocomplete and inference. The return type becomes the new type of that field.
+
+```ts
+pipe<{ role: 'admin' | 'user' }>().map('role', (r) => r === 'admin')
+// shape is now { role: boolean }
+```
+
+No need to annotate the callback return type. TypeScript infers it from the expression.
+
+### .into&lt;Target&gt;()
+
+Asserts that the current shape exactly matches the target type. Catches both extra and missing fields. Purely a type-level check, zero runtime cost. Must be the last call in the chain since it returns a plain migration function, not a builder.
+
+```ts
+type V2 = { name: string; id: string }
+
+// compiles: shape matches V2 exactly
+pipe<V1>().rename('userName', 'name').drop('isAdmin').into<V2>()
+
+// compile error: "extra fields: isAdmin"
+pipe<V1>().rename('userName', 'name').into<V2>()
+
+// compile error: "current shape is missing fields from target"
+pipe<V1>().drop('isAdmin').into<V2>()
+```
+
+## Mixing with custom logic
+
+The builder is great for mechanical transformations. For the interesting bits, just write a regular migration function:
+
+```ts
+'legacy->current': (user, ctx) => {
+  const email = user.name
+    ? `${user.name.toLowerCase().replace(/\s+/g, '.')}@example.com`
+    : 'unknown@example.com'
+
+  if (!user.name) {
+    ctx.warn('no name found, using placeholder email')
+  }
+
+  return { ...user, email, verified: false }
+}
+```
+
+You can also call a standalone pipe builder inside a regular function if you want both:
+
+```ts
+'legacy->current': (user, ctx) => {
+  // builder handles the boring field shuffling
+  const base = pipe<LegacyUser>()
+    .rename('userName', 'name')
+    .drop('legacyFlags')
+    (user, ctx)
+
+  // custom logic for the rest
+  return { ...base, email: deriveEmail(user), verified: false }
+}
+```
+
+## All methods
+
+| Method            | What it does                                                 |
+| ----------------- | ------------------------------------------------------------ |
+| `.rename(a, b)`   | Moves a field to a new key, autocompletes from current shape |
+| `.add(name, v)`   | Adds a field with a default, preserves literal types         |
+| `.drop(...names)` | Removes fields, constrained to current shape                 |
+| `.map(name, fn)`  | Transforms a field value, callback receives the actual type  |
+| `.into<T>()`      | Assert exact match against target type, catches extra fields |
+
+<Callout type="info">
+  The inline `pipe` field catches **missing fields** via the target type but not **extra fields** (structural typing). Use `.into<V2>()` at the end of the chain if you want TypeScript to reject extra fields too. With the standalone `pipe<V1>()` form, you always need `.into<V2>()` for target checking.
+</Callout>

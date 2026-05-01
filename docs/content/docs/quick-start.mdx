@@ -1,0 +1,188 @@
+---
+title: Quick Start
+description: Build your first schema registry with doba in under 5 minutes.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout'
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs'
+import { Step, Steps } from 'fumadocs-ui/components/steps'
+
+# Quick Start
+
+Create a registry that transforms user data between database, frontend, and AI representations.
+
+<Steps>
+
+<Step>
+
+## Define your schemas
+
+Each schema represents a different view of the same data:
+
+```ts title="schemas.ts"
+import { z } from 'zod'
+
+const databaseUser = z.object({
+  id: z.string(),
+  email: z.string(),
+  passwordHash: z.string(),
+  createdAt: z.string(),
+  role: z.enum(['admin', 'user']),
+})
+
+const frontendUser = z.object({
+  id: z.string(),
+  email: z.string(),
+  createdAt: z.string(),
+  role: z.enum(['admin', 'user']),
+})
+
+const aiUser = z.object({
+  id: z.string(),
+  email: z.string(),
+  isAdmin: z.boolean(),
+})
+```
+
+</Step>
+
+<Step>
+
+## Create the registry
+
+Register schemas and define migrations between them:
+
+```ts title="registry.ts"
+import { createRegistry } from 'dobajs'
+
+const userRegistry = createRegistry({
+  schemas: {
+    database: databaseUser,
+    frontend: frontendUser,
+    ai: aiUser,
+  },
+  migrations: {
+    'database->frontend': (user) => ({
+      id: user.id,
+      email: user.email,
+      createdAt: user.createdAt,
+      role: user.role,
+      // passwordHash is stripped!
+    }),
+    'database->ai': (user) => ({
+      id: user.id,
+      email: user.email,
+      isAdmin: user.role === 'admin',
+    }),
+    'frontend->ai': (user) => ({
+      id: user.id,
+      email: user.email,
+      isAdmin: user.role === 'admin',
+    }),
+  },
+})
+```
+
+This creates the following migration graph:
+
+<MigrationGraph
+  nodes={[{ id: 'database' }, { id: 'frontend' }, { id: 'ai' }]}
+  edges={[
+    { from: 'database', to: 'frontend' },
+    { from: 'database', to: 'ai' },
+    { from: 'frontend', to: 'ai' },
+  ]}
+/>
+
+</Step>
+
+<Step>
+
+## Transform data
+
+```ts title="transform.ts"
+const dbUser = {
+  id: 'user-123',
+  email: 'alice@example.com',
+  passwordHash: 'hashed_xyz',
+  createdAt: '2024-01-15T10:30:00Z',
+  role: 'admin' as const,
+}
+
+const result = await userRegistry.transform(dbUser, 'database', 'frontend')
+
+if (result.ok) {
+  console.log(result.value)
+  // { id: "user-123", email: "alice@example.com", createdAt: "...", role: "admin" }
+
+  console.log(result.meta.path)
+  // ["database", "frontend"]
+}
+```
+
+<ResultDemo
+  ok={true}
+  value='{ id: "user-123", email: "alice@example.com", role: "admin" }'
+  meta={{
+    path: '["database", "frontend"]',
+    steps: '1',
+  }}
+/>
+
+</Step>
+
+<Step>
+
+## Handle errors
+
+doba returns errors as values. No try/catch:
+
+```ts title="errors.ts"
+const result = await userRegistry.transform(invalidData, 'database', 'frontend')
+
+if (!result.ok) {
+  for (const issue of result.issues) {
+    console.log(issue.message)
+    // Typed validation errors
+  }
+}
+```
+
+<ResultDemo
+  ok={false}
+  issues={['Expected string, received number at "id"', 'Required at "email"']}
+/>
+
+</Step>
+
+</Steps>
+
+## What's next?
+
+<FeatureGrid>
+  <Feature
+    title="Path finding"
+    description="Learn how doba automatically chains migrations through intermediate schemas."
+    href="/docs/path-finding"
+  />
+  <Feature
+    title="Validation"
+    description="Control when and how data is validated during transforms."
+    href="/docs/validation"
+  />
+  <Feature
+    title="Migration context"
+    description="Track warnings, defaults, and audit trails through your migrations."
+    href="/docs/context"
+  />
+  <Feature
+    title="Migration helpers"
+    description="Type-safe pipe builder for field renaming, mapping, adding, and dropping."
+    href="/docs/helpers"
+  />
+  <Feature
+    title="Examples"
+    description="Full working examples with Zod, Valibot, ArkType, and more."
+    href="/docs/examples/with-zod"
+  />
+</FeatureGrid>

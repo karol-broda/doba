@@ -1,0 +1,65 @@
+{
+  "name": "dobajs",
+  "version": "0.0.1",
+  "description": "Versioned data codec with Standard Schema support",
+  "keywords": [
+    "arktype",
+    "codec",
+    "migration",
+    "schema",
+    "standard-schema",
+    "typescript",
+    "valibot",
+    "versioning",
+    "zod"
+  ],
+  "license": "MIT",
+  "author": "",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "./dist/index.mjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    },
+    "./result": {
+      "types": "./dist/result.d.mts",
+      "import": "./dist/result.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "test": "vitest run",
+    "test:watch": "vitest --watch",
+    "test:coverage": "vitest --coverage",
+    "test:types": "vitest --typecheck.only --run",
+    "bench": "bun tests/registry.bench.ts",
+    "bench:features": "bun tests/features.bench.ts",
+    "bench:stress": "bun tests/stress.bench.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.build.json",
+    "lint": "oxlint",
+    "fmt": "oxfmt --write .",
+    "fmt:check": "oxfmt --check .",
+    "check:publint": "publint",
+    "check:attw": "attw --pack . --ignore-rules no-resolution cjs-resolves-to-esm",
+    "prepublishOnly": "bun run build && bun run check:publint && bun run check:attw"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.17.0",
+    "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^2.1.0",
+    "mitata": "1.0.34",
+    "publint": "^0.3.0",
+    "tsdown": "^0.18.1",
+    "tsnapi": "0.3.2",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

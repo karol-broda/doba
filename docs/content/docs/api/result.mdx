@@ -1,0 +1,148 @@
+---
+title: Result
+description: Functional error handling with discriminated unions
+---
+
+doba uses a functional approach to error handling. Instead of throwing exceptions, operations return a `Result` type.
+
+## Result types
+
+### ResultOk
+
+A successful result with a typed value and metadata:
+
+```ts
+type ResultOk<T, M = unknown> = {
+  readonly ok: true
+  readonly value: T
+  readonly meta: M
+}
+```
+
+<ResultDemo
+  ok={true}
+  value='{ id: "user-123", email: "alice@example.com" }'
+  meta={{
+    path: '["database", "frontend"]',
+    steps: '1',
+    warnings: '[]',
+  }}
+/>
+
+### ResultErr
+
+A failed result with typed issues:
+
+```ts
+type ResultErr<E = unknown> = {
+  readonly ok: false
+  readonly issues: E
+}
+```
+
+<ResultDemo
+  ok={false}
+  issues={['Expected string, received number at "id"', 'Invalid email format at "email"']}
+/>
+
+### DobaIssue
+
+All issues returned by doba use this shape:
+
+```ts
+type DobaIssue = {
+  readonly code: DobaIssueCode
+  readonly message: string
+  readonly path?: readonly PropertyKey[]
+  readonly meta?: Record<string, unknown>
+}
+
+type DobaIssueCode =
+  | 'validation_failed'
+  | 'transform_failed'
+  | 'no_path_found'
+  | 'unknown_schema'
+  | 'invalid_input'
+```
+
+## Constructors
+
+### ok()
+
+Creates a successful result:
+
+```ts
+import { ok } from 'dobajs/result'
+
+const result = ok(value, meta)
+```
+
+### err()
+
+Creates a failed result:
+
+```ts
+import { err } from 'dobajs/result'
+
+const result = err(issues)
+```
+
+## Type guards
+
+### isOk() / isErr()
+
+Narrow the result type:
+
+```ts
+import { isOk, isErr } from 'dobajs/result'
+
+if (isOk(result)) {
+  console.log(result.value)
+}
+
+if (isErr(result)) {
+  console.error(result.issues)
+}
+```
+
+## Utilities
+
+### unwrap()
+
+Extracts the value or throws if it's an error. Use when you're certain the operation succeeded.
+
+```ts
+import { unwrap } from 'dobajs/result'
+
+const data = unwrap(result)
+```
+
+### unwrapOr()
+
+Extracts the value or returns a default fallback:
+
+```ts
+import { unwrapOr } from 'dobajs/result'
+
+const data = unwrapOr(result, fallbackValue)
+```
+
+### map()
+
+Transforms the value if successful, passes errors through unchanged:
+
+```ts
+import { map } from 'dobajs/result'
+
+const email = map(result, (user) => user.email)
+```
+
+### mapErr()
+
+Transforms the issues if failed, passes successes through unchanged:
+
+```ts
+import { mapErr } from 'dobajs/result'
+
+const formatted = mapErr(result, (issues) => issues.map((i) => i.message))
+```

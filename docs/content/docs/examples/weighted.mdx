@@ -1,0 +1,129 @@
+---
+title: Weighted Migrations
+description: Using costs, preferred flags, and deprecation to control path finding.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout'
+
+doba's path finding uses BFS by default (all edges cost 1). You can influence which path it picks using `preferred`, `cost`, and `deprecated` options on migrations.
+
+## Full example
+
+```ts
+import { z } from 'zod'
+import { createRegistry } from 'dobajs'
+
+const v1 = z.object({ id: z.string(), name: z.string() })
+const v2 = z.object({ id: z.string(), name: z.string(), email: z.string() })
+const v3 = z.object({
+  id: z.string(),
+  displayName: z.string(),
+  email: z.string(),
+  verified: z.boolean(),
+})
+const flat = z.object({ id: z.string(), label: z.string() })
+
+const registry = createRegistry({
+  schemas: { v1, v2, v3, flat },
+  migrations: {
+    // Preferred: always chosen over alternatives at equal distance
+    'v1->v2': {
+      migrate: (user, ctx) => {
+        ctx.defaulted(['email'], 'generated from name')
+        return {
+          id: user.id,
+          name: user.name,
+          email: `${user.name.toLowerCase().replace(/\s+/g, '.')}@example.com`,
+        }
+      },
+      preferred: true,
+      label: 'v1-to-v2-upgrade',
+    },
+
+    'v2->v3': {
+      migrate: (user, ctx) => {
+        ctx.defaulted(['verified'], 'set to false for new migrations')
+        return {
+          id: user.id,
+          displayName: user.name,
+          email: user.email,
+          verified: false,
+        }
+      },
+      preferred: true,
+      label: 'v2-to-v3-upgrade',
+    },
+
+    // Deprecated: high cost (1000), emits a warning when used
+    'v1->v3': {
+      migrate: (user, ctx) => {
+        ctx.warn('direct v1->v3 migration is outdated')
+        return {
+          id: user.id,
+          displayName: user.name,
+          email: `${user.name.toLowerCase().replace(/\s+/g, '.')}@example.com`,
+          verified: false,
+        }
+      },
+      deprecated: 'prefer v1 -> v2 -> v3 chain for proper defaults',
+      label: 'v1-to-v3-legacy',
+    },
+
+    // Custom cost: makes this path more expensive
+    'v3->flat': {
+      migrate: (user) => ({
+        id: user.id,
+        label: `${user.displayName} <${user.email}>`,
+      }),
+      cost: 10,
+      label: 'flatten-for-display',
+    },
+
+    'v2->flat': {
+      migrate: (user) => ({
+        id: user.id,
+        label: `${user.name} <${user.email}>`,
+      }),
+      label: 'flatten-v2',
+    },
+  },
+})
+```
+
+## How path finding works
+
+```ts
+const user = { id: 'user-1', name: 'Alice Smith' }
+
+// v1 -> v3: prefers v1->v2->v3 (preferred, cost 0+0=0)
+//           over   v1->v3     (deprecated, cost 1000)
+const path1 = registry.findPath('v1', 'v3')
+// ["v1", "v2", "v3"]
+
+// v1 -> flat: v1->v2->flat (cost 0+1=1)
+//             beats v1->v2->v3->flat (cost 0+0+10=10)
+const path2 = registry.findPath('v1', 'flat')
+// ["v1", "v2", "flat"]
+```
+
+## Forcing a specific path
+
+You can override automatic path finding by passing an explicit path:
+
+```ts
+const result = await registry.transform(user, 'v1', 'v3', {
+  path: ['v1', 'v3'],
+})
+
+if (result.ok) {
+  console.log(result.meta.warnings)
+  // ["direct v1->v3 migration is outdated"]
+  console.log(result.meta.steps)
+  // step details including deprecated flag
+}
+```
+
+<Callout type="warn">
+  Deprecated migrations still work but emit warnings and have a default cost of 1000. Use
+  `preferred: true` on the migrations you want the path finder to favor.
+</Callout>

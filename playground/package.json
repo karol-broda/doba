@@ -1,0 +1,31 @@
+{
+  "name": "doba-playground",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Interactive playground for testing doba with real schema libraries",
+  "type": "module",
+  "scripts": {
+    "start": "bun src/index.ts",
+    "zod": "bun src/with-zod.ts",
+    "arktype": "bun src/with-arktype.ts",
+    "valibot": "bun src/with-valibot.ts",
+    "reversible": "bun src/with-reversible.ts",
+    "weighted": "bun src/with-weighted.ts",
+    "helpers": "bun src/with-helpers.ts",
+    "explain": "bun src/with-explain.ts",
+    "hooks": "bun src/with-hooks.ts",
+    "debug": "bun src/with-debug.ts",
+    "all": "bun src/index.ts && bun src/with-zod.ts && bun src/with-arktype.ts && bun src/with-valibot.ts && bun src/with-reversible.ts && bun src/with-weighted.ts && bun src/with-helpers.ts && bun src/with-explain.ts && bun src/with-hooks.ts && bun src/with-debug.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "arktype": "^2.0.0",
+    "dobajs": "workspace:*",
+    "valibot": "^1.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

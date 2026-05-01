@@ -1,0 +1,36 @@
+{
+  "name": "doba-docs",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "prebuild": "fumadocs-mdx",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fontsource/instrument-serif": "5.2.8",
+    "@tailwindcss/postcss": "4.2.4",
+    "@takumi-rs/core": "1.1.2",
+    "@takumi-rs/core-linux-x64-gnu": "1.1.2",
+    "@takumi-rs/image-response": "1.1.2",
+    "fumadocs-core": "16.8.5",
+    "fumadocs-mdx": "14.3.2",
+    "fumadocs-ui": "16.8.5",
+    "motion": "12.38.0",
+    "next": "^16.0.0",
+    "postcss": "8.5.12",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-variants": "3.2.2",
+    "tailwindcss": "4.2.4"
+  },
+  "devDependencies": {
+    "@types/mdx": "^2.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.7.0"
+  }
+}

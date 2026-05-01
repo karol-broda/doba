@@ -1,0 +1,140 @@
+---
+title: Path Finding
+description: Automatic path discovery between schemas using BFS and Dijkstra.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout'
+
+# Path Finding
+
+When no direct migration exists between two schemas, doba automatically finds the optimal path through the migration graph.
+
+## How it works
+
+Given these migrations:
+
+```ts
+const registry = createRegistry({
+  schemas: { legacy, database, frontend, ai },
+  migrations: {
+    'legacy->database': (data) => {
+      /* upgrade */
+    },
+    'database->frontend': (data) => {
+      /* strip sensitive */
+    },
+    'frontend->ai': (data) => {
+      /* flatten */
+    },
+  },
+})
+```
+
+Transforming from `legacy` to `ai` automatically chains through every intermediate schema:
+
+<MigrationGraph
+  nodes={[{ id: 'legacy' }, { id: 'database' }, { id: 'frontend' }, { id: 'ai' }]}
+  edges={[
+    { from: 'legacy', to: 'database', label: 'upgrade' },
+    { from: 'database', to: 'frontend', label: 'strip' },
+    { from: 'frontend', to: 'ai', label: 'flatten' },
+  ]}
+/>
+
+```ts
+const result = await registry.transform(legacyData, 'legacy', 'ai')
+
+if (result.ok) {
+  console.log(result.meta.path)
+  // ["legacy", "database", "frontend", "ai"]
+}
+```
+
+<ResultDemo
+  ok={true}
+  value='{ id: "...", email: "...", isAdmin: true }'
+  meta={{
+    path: '["legacy", "database", "frontend", "ai"]',
+    steps: '3',
+  }}
+/>
+
+## Algorithm selection
+
+doba automatically picks the right algorithm based on your migrations:
+
+- **BFS**: all migrations have equal cost (no `cost`, `preferred`, or `deprecated` options). Finds the shortest path by hop count.
+- **Dijkstra**: any migration has a custom cost, is marked `preferred` (cost 0), or `deprecated` (cost 1000). Finds the lowest-cost path.
+
+You don't need to choose. The registry detects whether weighted edges exist at construction time.
+
+## Path strategies
+
+### `shortest` (default)
+
+Finds the optimal path using BFS or Dijkstra. Handles graphs with 10k+ edges efficiently.
+
+```ts
+createRegistry({
+  pathStrategy: 'shortest',
+  // ...
+})
+```
+
+### `direct`
+
+Only uses direct migrations. Returns an error if no direct `source->target` migration exists.
+
+```ts
+createRegistry({
+  pathStrategy: 'direct',
+  // ...
+})
+```
+
+You can also override the strategy per-transform:
+
+```ts
+await registry.transform(data, 'a', 'b', {
+  pathStrategy: 'direct',
+})
+```
+
+## Explicit paths
+
+Override automatic path finding by specifying the exact route:
+
+```ts
+await registry.transform(data, 'a', 'd', {
+  path: ['a', 'b', 'c', 'd'],
+})
+```
+
+## Inspecting paths
+
+Use `findPath` to preview what route doba would take without running a transform:
+
+```ts
+const path = registry.findPath('legacy', 'ai')
+// ["legacy", "database", "frontend", "ai"] or null
+```
+
+Returns `null` if no path exists between the two schemas.
+
+## Cost system
+
+Migration costs control which paths the Dijkstra algorithm prefers:
+
+| Option             | Cost | Effect                              |
+| ------------------ | ---- | ----------------------------------- |
+| (default)          | 1    | Standard edge weight                |
+| `preferred: true`  | 0    | Always chosen over alternatives     |
+| `deprecated: true` | 1000 | Avoided unless no other path exists |
+| `cost: N`          | N    | Explicit weight (overrides above)   |
+
+See [Weighted Migrations](/docs/examples/weighted) for a full example.
+
+<Callout type="info">
+  Path finding runs in **O(V + E)** time (BFS) or **O((V + E) log V)** time (Dijkstra) where V is
+  the number of schemas and E is the number of migrations.
+</Callout>

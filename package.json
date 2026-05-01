@@ -1,0 +1,39 @@
+{
+  "name": "doba-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "playground",
+    "docs"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "bun run --filter dobajs build",
+    "dev": "bun run --filter dobajs dev",
+    "test": "bun run --filter dobajs test",
+    "test:watch": "bun run --filter dobajs test:watch",
+    "test:coverage": "bun run --filter dobajs test:coverage",
+    "test:types": "bun run --filter dobajs test:types",
+    "typecheck": "bun run --filter dobajs typecheck",
+    "lint": "oxlint",
+    "fmt": "oxfmt --write .",
+    "fmt:check": "oxfmt --check .",
+    "check:unused": "knip",
+    "check:publint": "bun run --filter dobajs check:publint",
+    "check:attw": "bun run --filter dobajs check:attw",
+    "ci": "bun run fmt:check && bun run lint && bun run typecheck && bun run test && bun run build && bun run check:publint && bun run check:attw",
+    "playground": "bun run --filter doba-playground start"
+  },
+  "dependencies": {
+    "@types/bun": "1.3.8"
+  },
+  "devDependencies": {
+    "knip": "^6.8.0",
+    "oxfmt": "^0.47.0",
+    "oxlint": "^1.62.0"
+  },
+  "trustedDependencies": [
+    "esbuild",
+    "sharp"
+  ]
+}

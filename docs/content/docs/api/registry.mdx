@@ -1,0 +1,165 @@
+---
+title: Registry
+description: The core schema and migration container
+---
+
+import { Callout } from 'fumadocs-ui/components/callout'
+
+The `Registry` is the central piece of **doba**. It holds your schemas and migration functions, and provides methods to transform data between them.
+
+## createRegistry
+
+Creates a new registry instance. The migration graph is pre-computed at construction time.
+
+```ts
+import { createRegistry } from 'dobajs'
+import { z } from 'zod'
+
+const registry = createRegistry({
+  schemas: {
+    v1: z.object({ name: z.string() }),
+    v2: z.object({ firstName: z.string(), lastName: z.string() }),
+  },
+  migrations: {
+    'v1->v2': (v1) => ({
+      firstName: v1.name.split(' ')[0],
+      lastName: v1.name.split(' ')[1] || '',
+    }),
+  },
+})
+```
+
+### RegistryConfig
+
+| Option         | Type                     | Description                                                       |
+| -------------- | ------------------------ | ----------------------------------------------------------------- |
+| `schemas`      | `SchemaMap`              | Map of schema names to Standard Schema compliant objects.         |
+| `migrations`   | `MigrationsFor<Schemas>` | Migration definitions. Keys use `from->to` or `from<->to` syntax. |
+| `pathStrategy` | `'shortest' \| 'direct'` | How to find migration paths. Default: `'shortest'`.               |
+| `hooks`        | `RegistryHooks`          | Lifecycle hooks.                                                  |
+| `debug`        | `boolean`                | Logs all hook activity to the console. Default: `false`.          |
+
+### RegistryHooks
+
+```ts
+type RegistryHooks = {
+  onWarning?: (message: string, from: string, to: string) => void
+  onTransform?: (info: TransformHookInfo) => void
+  onStep?: (info: StepHookInfo) => void
+}
+```
+
+| Hook          | When it fires                                                                        |
+| ------------- | ------------------------------------------------------------------------------------ |
+| `onWarning`   | `ctx.warn()`, `ctx.defaulted()`, deprecated migration usage, migration conflicts     |
+| `onTransform` | After every transform completes (success or failure). Includes timing and path info. |
+| `onStep`      | After each migration step completes. Includes step index, label, and timing.         |
+
+See [Debugging](/docs/debugging) for usage examples and type definitions.
+
+## Properties
+
+### schemas
+
+The registered schemas, exactly as passed to `createRegistry`.
+
+```ts
+registry.schemas // { v1: ZodObject<...>, v2: ZodObject<...> }
+```
+
+## Methods
+
+### transform()
+
+Transforms data from one schema to another.
+
+```ts
+const result = await registry.transform(data, 'v1', 'v2', options?)
+```
+
+Returns a `TransformResult`, a discriminated union of success (with value and metadata) or failure (with issues).
+
+#### TransformOptions
+
+| Option         | Type                        | Default    | Description                                                   |
+| -------------- | --------------------------- | ---------- | ------------------------------------------------------------- |
+| `validate`     | `'none' \| 'end' \| 'each'` | `'end'`    | When to validate against schemas.                             |
+| `path`         | `string[]`                  | (auto)     | Explicit migration path. Overrides automatic path finding.    |
+| `pathStrategy` | `'shortest' \| 'direct'`    | (registry) | Override the registry-level path strategy for this transform. |
+| `validatePath` | `boolean`                   | `false`    | Check that every step has a migration before executing.       |
+
+#### TransformMeta
+
+On success, `result.meta` contains:
+
+```ts
+type TransformMeta = {
+  path: string[] // schema keys traversed
+  steps: StepInfo[] // per-step metadata
+  warnings: WarningInfo[] // warnings from ctx.warn() and deprecated migrations
+  defaults: DefaultedInfo[] // fields filled via ctx.defaulted()
+}
+
+type StepInfo = {
+  from: string
+  to: string
+  label?: string // from migration metadata
+  deprecated?: string | boolean
+}
+```
+
+### validate()
+
+Validates a value against a registered schema without transforming.
+
+```ts
+const result = await registry.validate(data, 'v2')
+```
+
+Returns a `ValidateResult` with `meta.schema` set to the schema key.
+
+### has()
+
+Type guard to check if a schema name is registered.
+
+```ts
+if (registry.has(name)) {
+  // name is narrowed to a valid schema key
+}
+```
+
+### hasMigration()
+
+Checks if a **direct** migration exists between two schemas. Does not consider multi-step paths.
+
+```ts
+registry.hasMigration('v1', 'v2') // true
+registry.hasMigration('v2', 'v1') // false (unless defined)
+```
+
+### findPath()
+
+Returns the sequence of schemas needed to migrate from one to another, or `null` if no path exists.
+
+```ts
+const path = registry.findPath('v1', 'v3')
+// ['v1', 'v2', 'v3'] or null
+```
+
+Uses the registry's `pathStrategy` to determine the algorithm (BFS or Dijkstra).
+
+### explain()
+
+Returns a diagnostic description of the migration path between two schemas without running any migrations. Includes costs, labels, deprecation info, and a human-readable summary.
+
+```ts
+const info = registry.explain('v1', 'v3')
+console.log(info.summary)
+// Path: v1 -> v2 -> v3 (2 steps, total cost: 0)
+//   1. v1 -> v2 (cost: 0) [v1-to-v2-upgrade]
+//   2. v2 -> v3 (cost: 0) [v2-to-v3-upgrade]
+```
+
+When no path exists, the summary includes which schemas are reachable from the source and which schemas can reach the target.
+
+See [Debugging](/docs/debugging) for full details.

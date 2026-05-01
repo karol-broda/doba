@@ -1,0 +1,98 @@
+---
+title: Performance
+description: Benchmarks and scaling characteristics.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout'
+
+# Performance
+
+All benchmarks run on Apple M3 Pro using [mitata](https://github.com/evanwashere/mitata). Numbers will vary on your hardware -- run them yourself to get a feel.
+
+<BenchmarkGrid>
+  <BenchmarkCard value="~2ns" label="Lookup" detail="has() / schema resolution" />
+  <BenchmarkCard value="~505ns" label="Transform" detail="single hop, validated" />
+  <BenchmarkCard value="~140ns" label="Per hop" detail="linear scaling" />
+  <BenchmarkCard value="~4.3ms" label="10k batch" detail="sequential, 1 hop each" />
+</BenchmarkGrid>
+
+## Operations
+
+<BenchmarkTable
+  rows={[
+    { operation: 'has()', time: '~2ns', throughput: '500M ops/sec' },
+    { operation: 'hasMigration()', time: '~45ns', throughput: '22M ops/sec' },
+    { operation: 'validate()', time: '~108ns', throughput: '9.3M ops/sec' },
+    { operation: 'explain()', time: '~385ns', throughput: '2.6M ops/sec' },
+    { operation: 'transform (1 hop)', time: '~505ns', throughput: '2.0M ops/sec' },
+    { operation: 'transform (10 hops)', time: '~1.8us', throughput: '560K ops/sec' },
+    { operation: 'transform (99 hops)', time: '~13.9us', throughput: '72K ops/sec' },
+    { operation: 'findPath (100 nodes)', time: '~7.5us', throughput: '133K ops/sec' },
+  ]}
+/>
+
+Lookups are O(1) regardless of registry size. Transforms scale linearly with chain depth at roughly ~140ns per hop. The graph is built once at registry creation, so path resolution doesn't rebuild anything.
+
+## Tradeoffs
+
+Every feature has a cost. Here's what each one adds.
+
+<BenchmarkTable
+  rows={[
+    { operation: 'Hooks (noop callbacks)', time: '+19%', throughput: '519ns -> 620ns' },
+    { operation: 'Deprecated migration', time: '+25%', throughput: '443ns -> 553ns' },
+    { operation: 'Pipe builder vs bare fn', time: '~2x', throughput: '484ns -> 903ns' },
+    { operation: 'Context calls (3w + 3d)', time: '~1.7x', throughput: '485ns -> 815ns' },
+  ]}
+/>
+
+Hooks with empty callbacks add about 19% -- the timing hooks (`onTransform`, `onStep`) add `performance.now()` calls and per-step object allocations. When no timing hooks are registered, doba skips all of that entirely. The pipe builder is about 2x slower than a hand-written migration function because it runs each step (rename, drop, add, map) as a separate object spread. If that matters in your hot path, use bare functions. For most cases the ergonomics are worth it.
+
+Providing an explicit path skips BFS entirely and saves about 52% on longer chains (2.0us vs 4.2us at 25 hops). Worth doing if you're calling the same transform repeatedly and already know the route.
+
+## Scaling
+
+<ScalingTable
+  rows={[
+    { dimension: 'Chain depth', scaling: 'Linear', notes: '~140ns per additional hop' },
+    { dimension: 'Schema count', scaling: 'O(1)', notes: '~2ns regardless of registry size' },
+    { dimension: 'Object size', scaling: 'Constant', notes: 'passes references, not copies' },
+    { dimension: 'Batch size', scaling: 'Linear', notes: '~430ns per item' },
+    { dimension: 'Graph complexity', scaling: 'BFS', notes: '10k+ edges' },
+  ]}
+/>
+
+## Edge cases
+
+<BenchmarkTable
+  rows={[
+    { operation: 'Same-schema (validate: none)', time: '~120ns', throughput: 'identity, no work' },
+    { operation: 'Same-schema (validate: end)', time: '~194ns', throughput: 'validates only' },
+    { operation: 'Unknown schema (error)', time: '~103ns', throughput: 'fails immediately' },
+    { operation: 'No path found (error)', time: '~668ns', throughput: 'runs BFS, finds nothing' },
+    { operation: 'Bidirectional migration', time: '~501ns', throughput: 'same cost as one-way' },
+  ]}
+/>
+
+Errors fail fast. An unknown schema returns in ~103ns without touching the graph. A missing path is slower (~668ns) because BFS has to exhaust the search before giving up.
+
+## Recursive structures
+
+These measure the cost of migrating complex nested data through a single transform. The time is dominated by the migration function itself, not doba's overhead.
+
+<BenchmarkTable
+  rows={[
+    { operation: 'Tree (364 nodes)', time: '~762ns', throughput: '1.3M ops/sec' },
+    { operation: 'Linked list (1k nodes)', time: '~14.4us', throughput: '69K ops/sec' },
+    { operation: 'Nested object (100 levels)', time: '~9.2us', throughput: '109K ops/sec' },
+    { operation: 'Graph node (1k edges)', time: '~5.7us', throughput: '175K ops/sec' },
+  ]}
+/>
+
+## Run it yourself
+
+```bash
+bun run bench              # core operations
+bun tests/features.bench.ts   # feature overhead, explain, pipe, hooks
+bun tests/stress.bench.ts     # extreme scale, recursive structures
+```

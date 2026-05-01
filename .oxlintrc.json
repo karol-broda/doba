@@ -1,0 +1,60 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "pedantic": "warn",
+    "perf": "warn",
+    "style": "warn",
+    "restriction": "off"
+  },
+  "plugins": ["typescript", "unicorn", "oxc"],
+  "rules": {
+    "no-console": "warn",
+    "no-debugger": "error",
+    "no-empty": "error",
+    "no-duplicate-case": "error",
+    "no-fallthrough": "error",
+    "no-self-compare": "error",
+    "no-template-curly-in-string": "warn",
+    "no-unsafe-negation": "error",
+    "no-unused-private-class-members": "error",
+    "prefer-const": "warn",
+
+    "typescript/no-explicit-any": "error",
+    "typescript/no-non-null-assertion": "error",
+    "typescript/no-unsafe-type-assertion": "warn",
+    "typescript/consistent-type-imports": "warn",
+    "typescript/consistent-type-definitions": "off",
+    "typescript/no-unnecessary-type-assertion": "warn",
+
+    "unicorn/no-null": "off",
+    "unicorn/consistent-function-scoping": "warn",
+
+    "id-length": "off",
+    "no-magic-numbers": "off",
+    "no-underscore-dangle": "off",
+
+    "sort-keys": "off",
+    "sort-imports": "off",
+    "capitalized-comments": "off",
+    "no-ternary": "off",
+    "no-inline-comments": "off",
+    "no-continue": "off",
+    "func-names": "off",
+    "func-style": "off",
+    "max-lines-per-function": "off",
+    "max-statements": "off",
+    "max-lines": "off",
+    "max-params": "off"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test-d.ts"],
+      "rules": {
+        "no-unused-expressions": "off"
+      }
+    }
+  ],
+  "ignorePatterns": ["dist", "node_modules", "coverage", "__snapshots__"]
+}
