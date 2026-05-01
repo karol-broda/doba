@@ -1,6 +1,6 @@
 {
   "name": "dobajs",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Versioned data codec with Standard Schema support",
   "keywords": [
     "arktype",
