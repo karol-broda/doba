@@ -59,15 +59,15 @@
     "release": "bumpp"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.17.0",
-    "@types/node": "^22.10.0",
-    "@vitest/coverage-v8": "^2.1.0",
+    "@arethetypeswrong/cli": "0.17.4",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "2.1.9",
     "bumpp": "11.0.1",
     "mitata": "1.0.34",
-    "publint": "^0.3.0",
-    "tsdown": "^0.18.1",
+    "publint": "0.3.18",
+    "tsdown": "0.18.4",
     "tsnapi": "0.3.2",
-    "typescript": "^5.7.0",
-    "vitest": "^2.1.0"
+    "typescript": "catalog:",
+    "vitest": "2.1.9"
   }
 }

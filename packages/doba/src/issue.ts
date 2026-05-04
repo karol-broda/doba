@@ -5,6 +5,8 @@ export type DobaIssueCode =
   | 'no_path_found'
   | 'unknown_schema'
   | 'invalid_input'
+  | 'identify_failed'
+  | 'identify_ambiguous'
 
 /** structured error produced by validation or transformation. */
 export type DobaIssue = {

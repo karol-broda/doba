@@ -7,7 +7,7 @@ const height = 1260
 
 const bg = { r: 13, g: 10, b: 26 }
 
-async function createGlow(
+function createGlow(
   canvasW: number,
   canvasH: number,
   cx: number,

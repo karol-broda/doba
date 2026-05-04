@@ -1,6 +1,6 @@
 ---
 title: Context
-description: Migration context and utilities
+description: Migration context and metadata types
 ---
 
 Every migration function receives a `TransformContext` as its second argument. This context allows you to interact with the migration process beyond just returning a value.
@@ -8,17 +8,23 @@ Every migration function receives a `TransformContext` as its second argument. T
 ## TransformContext
 
 ```ts
-type TransformContext<Keys extends string = string> = {
+type TransformContext<
+  Keys extends string = string,
+  From extends Keys = Keys,
+  To extends Keys = Keys,
+> = {
   readonly warn: (message: string) => void
   readonly defaulted: (path: readonly PropertyKey[], message: string) => void
-  readonly from: string
-  readonly to: string
+  readonly from: From
+  readonly to: To
 }
 ```
 
+The `From` and `To` generics are inferred from the migration key (e.g. `'v1->v2'` gives `From = 'v1'`, `To = 'v2'`), so `ctx.from` and `ctx.to` are narrowed to literal string types.
+
 ### warn()
 
-Emits a warning that gets collected in the transform metadata. Also triggers the `onWarning` hook if configured.
+Emits a warning that gets collected in `result.meta.warnings`. Also triggers the `onWarning` hook if configured.
 
 ```ts
 'v1->v2': (data, ctx) => {
@@ -31,7 +37,7 @@ Emits a warning that gets collected in the transform metadata. Also triggers the
 
 ### defaulted()
 
-Records that a field was filled with a default value. Takes a property path and a message. This also triggers the `onWarning` hook with a formatted message.
+Records that a field was filled with a default value. Takes a property path and a message. Also triggers the `onWarning` hook with a formatted message (`"defaulted <path>: <message>"`).
 
 ```ts
 ctx.defaulted(['settings', 'theme'], 'Theme not found, defaulting to "light"')
@@ -52,28 +58,41 @@ The schema keys for the current migration step:
 
 ## Result metadata types
 
-Warnings and defaults are collected on the transform result:
+Warnings and defaults are collected on the transform result. Both types carry two generic parameters for the `from` and `to` schema keys. When accessed through `result.meta`, these are narrowed via [`NarrowExclude`](/docs/api/registry#narrowexclude) so that `from` and `to` exclude the endpoints of the overall transform.
 
 ### WarningInfo
 
 ```ts
-type WarningInfo = {
+type WarningInfo<FromKey extends string = string, ToKey extends string = FromKey> = {
   readonly message: string
-  readonly from: string // schema the warning was emitted from
-  readonly to: string // schema the warning was emitted to
+  readonly from: FromKey
+  readonly to: ToKey
 }
 ```
+
+| Field     | Type      | Description                              |
+| --------- | --------- | ---------------------------------------- |
+| `message` | `string`  | The warning text passed to `ctx.warn()`. |
+| `from`    | `FromKey` | Schema key the warning was emitted from. |
+| `to`      | `ToKey`   | Schema key the warning was emitted to.   |
 
 ### DefaultedInfo
 
 ```ts
-type DefaultedInfo = {
-  readonly path: readonly PropertyKey[] // property path that was defaulted
+type DefaultedInfo<FromKey extends string = string, ToKey extends string = FromKey> = {
+  readonly path: readonly PropertyKey[]
   readonly message: string
-  readonly from: string
-  readonly to: string
+  readonly from: FromKey
+  readonly to: ToKey
 }
 ```
+
+| Field     | Type                       | Description                                           |
+| --------- | -------------------------- | ----------------------------------------------------- |
+| `path`    | `readonly PropertyKey[]`   | Property path to the defaulted field, e.g. `['address', 'zip']`. |
+| `message` | `string`                   | Description of what was defaulted.                    |
+| `from`    | `FromKey`                  | Schema key the default was recorded from.             |
+| `to`      | `ToKey`                    | Schema key the default was recorded to.               |
 
 ### Accessing metadata
 

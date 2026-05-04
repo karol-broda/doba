@@ -3,8 +3,8 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "prebuild": "fumadocs-mdx",
-    "dev": "next dev",
+    "prebuild": "bun run --filter dobajs build && fumadocs-mdx",
+    "dev": "NODE_NO_WARNINGS=1 next dev",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit"
@@ -15,24 +15,29 @@
     "@takumi-rs/core": "1.1.2",
     "@takumi-rs/core-linux-x64-gnu": "1.1.2",
     "@takumi-rs/image-response": "1.1.2",
+    "dobajs": "workspace:*",
     "feed": "5.2.1",
     "fumadocs-core": "16.8.5",
     "fumadocs-mdx": "14.3.2",
+    "fumadocs-twoslash": "3.2.0",
+    "fumadocs-typescript": "5.2.6",
     "fumadocs-ui": "16.8.5",
     "motion": "12.38.0",
-    "next": "^16.0.0",
+    "next": "16.2.4",
     "postcss": "8.5.12",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
     "tailwind-variants": "3.2.2",
-    "tailwindcss": "4.2.4"
+    "tailwindcss": "4.2.4",
+    "twoslash": "0.3.8",
+    "zod": "4.4.1"
   },
   "devDependencies": {
-    "@types/mdx": "^2.0.0",
-    "@types/node": "^22.0.0",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
+    "@types/mdx": "2.0.13",
+    "@types/node": "catalog:",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
     "sharp": "0.34.5",
-    "typescript": "^5.7.0"
+    "typescript": "catalog:"
   }
 }

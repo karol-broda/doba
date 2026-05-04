@@ -1,0 +1,430 @@
+---
+title: Schema Identification
+description: Detect which schema unknown data belongs to, then transform it.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout'
+
+# Schema Identification
+
+Sometimes you have data but don't know which schema it came from. An API payload, a deserialized blob, a message from a queue. You need to figure out what it is before you can transform it.
+
+The `identify` config option adds two methods to your registry: `identify()` to detect the schema, and `identifyAndTransform()` to detect and transform in one call. Both are fully opt-in. If you don't configure `identify`, these methods don't exist on the registry type at all.
+
+## Two forms
+
+The `identify` option accepts either a **guard map** or a **function**. Pick the one that fits your data.
+
+### Guard map
+
+Map schema keys to predicates. Each predicate receives an unknown value and returns `true` if it belongs to that schema:
+
+```ts twoslash
+import { createRegistry, match } from 'dobajs'
+import { z } from 'zod'
+
+const registry = createRegistry({
+//    ^?
+  schemas: {
+    database: z.object({
+      id: z.string(),
+      email: z.string(),
+      passwordHash: z.string(),
+      role: z.enum(['admin', 'user']),
+    }),
+    frontend: z.object({
+      id: z.string(),
+      email: z.string(),
+      createdAt: z.string(),
+      role: z.enum(['admin', 'user']),
+    }),
+    ai: z.object({
+      id: z.string(),
+      email: z.string(),
+      isAdmin: z.boolean(),
+    }),
+  },
+  migrations: {
+    'database->frontend': (user) => ({
+      id: user.id,
+      email: user.email,
+      createdAt: new Date().toISOString(),
+      role: user.role,
+    }),
+    'frontend->ai': (user) => ({
+      id: user.id,
+      email: user.email,
+      isAdmin: user.role === 'admin',
+    }),
+  },
+  identify: {
+    database: match.field('passwordHash'),
+    ai: match.field('isAdmin'),
+    frontend: match.fields('createdAt', 'role').test((v) => {
+      return !('passwordHash' in (v as object)) && !('isAdmin' in (v as object))
+    }),
+  },
+})
+```
+
+Guards run in **definition order**. The first guard that returns `true` wins. You don't have to cover every schema. Unlisted schemas are simply not identifiable.
+
+<Callout type="info">
+  Guard map keys are typed against your schema map. Writing `identify: { typo: match.field('x') }` is a compile-time error if `"typo"` isn't a registered schema key.
+</Callout>
+
+### Function form
+
+For pattern-based discrimination (like versioned data with a type field), pass a single function that returns the schema key or `null`:
+
+```ts
+import { createRegistry, byField } from 'dobajs'
+
+const registry = createRegistry({
+  schemas: { v1: v1Schema, v2: v2Schema, v3: v3Schema },
+  migrations: { /* ... */ },
+  identify: byField('version', { prefix: 'v' }),
+})
+// { version: "2" } -> "v2" -> matches the "v2" schema key
+```
+
+Or write the function yourself for full control:
+
+```ts
+const registry = createRegistry({
+  schemas: { database: dbSchema, ai: aiSchema, frontend: feSchema },
+  migrations: { /* ... */ },
+  identify: (value: unknown) => {
+    if (typeof value !== 'object' || value === null) {
+      return null
+    }
+    if ('passwordHash' in value) {
+      return 'database'
+    }
+    if ('isAdmin' in value) {
+      return 'ai'
+    }
+    if ('createdAt' in value) {
+      return 'frontend'
+    }
+    return null
+  },
+})
+```
+
+Return `null` when nothing matches. Returned keys are verified against the schema map at runtime. If the function returns a string that isn't a registered schema key, `identify()` returns an `identify_failed` error.
+
+## Using identify
+
+### identify()
+
+Detects which schema a value belongs to:
+
+```ts twoslash
+import { createRegistry, match } from 'dobajs'
+import { z } from 'zod'
+
+const registry = createRegistry({
+  schemas: {
+    database: z.object({ id: z.string(), email: z.string(), passwordHash: z.string() }),
+    frontend: z.object({ id: z.string(), email: z.string(), createdAt: z.string() }),
+    ai: z.object({ id: z.string(), email: z.string(), isAdmin: z.boolean() }),
+  },
+  migrations: {},
+  identify: {
+    database: match.field('passwordHash'),
+    ai: match.field('isAdmin'),
+  },
+})
+// ---cut---
+const result = await registry.identify({ passwordHash: 'abc123', id: '1', email: 'a@b.com' })
+
+if (result.ok) {
+  result.value
+//       ^?
+  result.meta.schema
+} else {
+  result.issues[0].code
+//                 ^?
+}
+```
+
+<ResultDemo
+  ok={true}
+  value='"database"'
+  meta={{
+    schema: '"database"',
+  }}
+/>
+
+### identifyAndTransform()
+
+The primary use case. Detect the source schema and transform to a target in one call:
+
+```ts twoslash
+import { createRegistry, match } from 'dobajs'
+import { z } from 'zod'
+
+const registry = createRegistry({
+  schemas: {
+    database: z.object({ id: z.string(), email: z.string(), passwordHash: z.string(), role: z.enum(['admin', 'user']) }),
+    frontend: z.object({ id: z.string(), email: z.string(), createdAt: z.string(), role: z.enum(['admin', 'user']) }),
+    ai: z.object({ id: z.string(), email: z.string(), isAdmin: z.boolean() }),
+  },
+  migrations: {
+    'database->frontend': (user) => ({ id: user.id, email: user.email, createdAt: new Date().toISOString(), role: user.role }),
+    'frontend->ai': (user) => ({ id: user.id, email: user.email, isAdmin: user.role === 'admin' }),
+  },
+  identify: {
+    database: match.field('passwordHash'),
+    ai: match.field('isAdmin'),
+  },
+})
+const unknownData: unknown = { id: '1', email: 'a@b.com', passwordHash: 'abc' }
+// ---cut---
+const result = await registry.identifyAndTransform(unknownData, 'ai')
+
+if (result.ok) {
+  result.value
+//       ^?
+  result.meta.from
+//            ^?
+  result.meta.path
+//            ^?
+}
+```
+
+<ResultDemo
+  ok={true}
+  value='{ id: "user-123", email: "alice@example.com", isAdmin: true }'
+  meta={{
+    from: '"database"',
+    path: '["database", "frontend", "ai"]',
+    steps: '2',
+  }}
+/>
+
+This runs `identify()` first, then feeds the result into `transform()`. The path is resolved automatically through the migration graph. All [transform options](/docs/validation) work here:
+
+```ts
+await registry.identifyAndTransform(data, 'ai', {
+  validate: 'each',
+  pathStrategy: 'direct',
+})
+```
+
+## Helpers
+
+### match
+
+Chainable predicate builder. Each method adds an AND condition. The result is both chainable (add more conditions) and callable as `(value: unknown) => boolean`:
+
+```ts
+import { match } from 'dobajs'
+
+// single checks
+match.field('passwordHash')                    // field exists
+match.field('version', 2)                      // field equals value (strict ===)
+match.fields('displayName', 'avatar')          // all fields present
+match.type('string')                           // typeof check
+match.test((v) => Array.isArray(v))            // arbitrary predicate
+
+// chaining = AND
+match.field('passwordHash').field('email')
+// true only if both passwordHash AND email exist
+
+// complex guard
+match.type('object')
+  .fields('id', 'email')
+  .test((v) => !('passwordHash' in (v as object)))
+```
+
+### byField
+
+Reads a field from the value and derives a schema key. Handles the common case where data has a `type`, `version`, or `kind` field:
+
+```ts
+import { byField } from 'dobajs'
+
+// value.version matches schema key directly
+byField('version')
+// { version: "v1" } -> "v1"
+
+// prefix/suffix for naming conventions
+byField('version', { prefix: 'v' })
+// { version: "2" } -> "v2"
+
+byField('kind', { prefix: 'schema_', suffix: '_legacy' })
+// { kind: "user" } -> "schema_user_legacy"
+
+// explicit mapping when convention doesn't fit
+byField('type', { map: { UserDB: 'database', UserFE: 'frontend' } })
+// { type: "UserDB" } -> "database"
+// { type: "Unknown" } -> null
+```
+
+`prefix`/`suffix` and `map` are mutually exclusive. Field values are converted to strings via `String()`. Returns `null` if the value isn't an object or the field is missing.
+
+### firstMatch
+
+Composes multiple discriminator functions. Tries each in order, returns the first non-null result:
+
+```ts
+import { byField, firstMatch } from 'dobajs'
+
+identify: firstMatch(
+  byField('_tag'),                    // try tagged data first
+  byField('version', { prefix: 'v' }), // then version field
+  (v) => typeof v === 'string' ? 'name' : null, // then typeof
+)
+```
+
+### tryParse
+
+A sentinel value. When used as a guard, doba validates the value against that schema's `~standard.validate()` instead of running a sync predicate. Import it from `dobajs`:
+
+```ts
+import { createRegistry, match, tryParse } from 'dobajs'
+
+const registry = createRegistry({
+  schemas: { cat: catSchema, dog: dogSchema, fish: fishSchema },
+  migrations: { /* ... */ },
+  identify: {
+    cat: match.field('indoor'),   // cheap sync check
+    dog: tryParse,                 // validate against dogSchema
+    fish: tryParse,                // validate against fishSchema
+  },
+})
+```
+
+**How it works:**
+
+1. Sync guards run first (cheap, one function call each)
+2. If a sync guard matches, that's the result. `tryParse` schemas are never checked.
+3. If no sync guard matched, all `tryParse` schemas are validated **in parallel**
+4. If exactly one validates, that's the match
+5. If multiple validate, you get `identify_ambiguous`
+6. If none validate, you get `identify_failed`
+
+<Callout type="warn">
+  **Prefer sync guards over `tryParse`.** Sync strategies (guard map, function, `byField`) run at ~120--200ns per call. `tryParse` runs actual schema validation and costs ~435ns, roughly 2x slower. Reserve it for schemas that are structurally hard to tell apart.
+</Callout>
+
+## Error handling
+
+Two issue codes specific to identification:
+
+### identify_failed
+
+No guard matched and no `tryParse` schema validated the value:
+
+```ts
+const result = await registry.identify({ completely: 'unknown' })
+if (!result.ok) {
+  result.issues[0].code    // "identify_failed"
+  result.issues[0].message // "no schema matched the provided value"
+}
+```
+
+### identify_ambiguous
+
+Multiple `tryParse` schemas validated the same value. This only happens with `tryParse`. Sync guards use first-match-wins, so they can never produce ambiguity.
+
+```ts
+const result = await registry.identify(ambiguousData)
+if (!result.ok) {
+  result.issues[0].code    // "identify_ambiguous"
+  result.issues[0].message // "multiple schemas matched: cat, dog"
+  result.issues[0].meta    // { matches: ["cat", "dog"] }
+}
+```
+
+Fix ambiguity by adding a sync guard for one of the conflicting schemas, or making the schemas more specific so they don't both validate the same input.
+
+## Performance
+
+All identify strategies are fast, but they aren't equal. Benchmarks on Apple M3 Pro:
+
+<BenchmarkTable
+  rows={[
+    { operation: 'Guard map (match)', time: '~120ns', throughput: '8.4M ops/sec' },
+    { operation: 'Function form', time: '~195ns', throughput: '5.1M ops/sec' },
+    { operation: 'byField', time: '~205ns', throughput: '4.9M ops/sec' },
+    { operation: 'tryParse (schema validation)', time: '~435ns', throughput: '2.3M ops/sec' },
+    { operation: 'identifyAndTransform (1 hop)', time: '~816ns', throughput: '1.2M ops/sec' },
+    { operation: 'identifyAndTransform (2 hops)', time: '~773ns', throughput: '1.3M ops/sec' },
+  ]}
+/>
+
+<Callout type="info">
+  **Build `match` chains once.** Calling `match.field('x').field('y')` allocates new arrays and closures on each call (~1.6us). Assign the chain to a variable and reuse it. Executing an already built chain is ~10--30ns.
+</Callout>
+
+`identifyAndTransform` has minimal overhead compared to calling `identify` then `transform` separately. Use whichever reads better in your code.
+
+## Conditional types
+
+When `identify` is not in the config, the methods don't exist on the registry type. This is enforced at the type level via function overloads:
+
+```ts
+// Without identify: methods don't exist
+const reg = createRegistry({ schemas, migrations })
+// reg.identify        -> type error: property does not exist
+// reg.identifyAndTransform -> type error: property does not exist
+
+// With identify: methods are present
+const reg = createRegistry({ schemas, migrations, identify: { ... } })
+await reg.identify(data)                      // works
+await reg.identifyAndTransform(data, 'ai')    // works
+```
+
+The existing `transform()`, `validate()`, `has()`, `findPath()`, and `explain()` methods work exactly the same whether `identify` is configured or not.
+
+## Full example
+
+Putting it all together with a versioned API:
+
+```ts twoslash
+import { createRegistry, match } from 'dobajs'
+import { z } from 'zod'
+
+const v1User = z.object({ name: z.string(), admin: z.boolean() })
+const v2User = z.object({ firstName: z.string(), lastName: z.string(), role: z.enum(['admin', 'user']) })
+const v3User = z.object({ displayName: z.string(), role: z.enum(['admin', 'user']), email: z.string() })
+
+const registry = createRegistry({
+  schemas: { v1: v1User, v2: v2User, v3: v3User },
+  migrations: {
+    'v1->v2': (u) => ({
+      firstName: u.name.split(' ')[0] ?? u.name,
+      lastName: u.name.split(' ')[1] ?? '',
+      role: u.admin ? 'admin' as const : 'user' as const,
+    }),
+    'v2->v3': (u) => ({
+      displayName: `${u.firstName} ${u.lastName}`.trim(),
+      role: u.role,
+      email: 'unknown@example.com',
+    }),
+  },
+  identify: {
+    v1: match.field('admin'),
+    v2: match.fields('firstName', 'lastName'),
+    v3: match.field('displayName'),
+  },
+})
+
+// Unknown data comes in from an API
+const data: unknown = { name: 'Alice Smith', admin: true }
+
+const result = await registry.identifyAndTransform(data, 'v3')
+if (result.ok) {
+  result.value
+//       ^?
+  result.meta.from
+//            ^?
+  result.meta.path
+//            ^?
+}
+```
+
+For the full API reference including all types and method signatures, see the [Identify API reference](/docs/api/identify).

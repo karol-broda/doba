@@ -20,13 +20,32 @@ Log non-critical information about the migration:
 
 Warnings appear in `result.meta.warnings` as `WarningInfo` objects:
 
-```ts
+```ts twoslash
+import { createRegistry } from 'dobajs'
+import { z } from 'zod'
+
+const registry = createRegistry({
+  schemas: {
+    legacy: z.object({ name: z.string() }),
+    current: z.object({ name: z.string(), email: z.string() }),
+  },
+  migrations: {
+    'legacy->current': (value, ctx) => {
+      ctx.warn('upgrading from legacy format, some fields may be approximate')
+      return { name: value.name, email: 'unknown@example.com' }
+    },
+  },
+})
+const data = { name: 'Alice' }
+// ---cut---
 const result = await registry.transform(data, 'legacy', 'current')
 if (result.ok) {
   for (const warning of result.meta.warnings) {
-    console.log(warning.message) // "upgrading from legacy format..."
-    console.log(warning.from) // "legacy"
-    console.log(warning.to) // "current"
+    warning.message
+    warning.from
+//          ^?
+    warning.to
+//          ^?
   }
 }
 ```

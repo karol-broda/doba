@@ -1,5 +1,5 @@
 import type { SchemaMap, SchemaKeys } from './schema.js'
-import type { InferOutput } from './standard-schema.js'
+import type { InferOutput, StandardSchemaV1 } from './standard-schema.js'
 import {
   type MigrationsFor,
   type ResolvedMigration,
@@ -15,10 +15,11 @@ import {
   reverseGraph,
 } from './graph.js'
 
-import { ok, err } from './result.js'
-import { createIssue } from './issue.js'
+import { type Result, ok, err } from './result.js'
+import { type DobaIssue, createIssue } from './issue.js'
 import { createTransformState, createTransformContext } from './context.js'
 import {
+  type NarrowExclude,
   type PathStrategy,
   type StepInfo,
   type TransformMeta,
@@ -27,6 +28,7 @@ import {
   type ValidateResult,
   validateWithSchema,
 } from './transform.js'
+import { type IdentifyGuard, type TryParse, tryParse } from './identify.js'
 
 /** information passed to the {@link RegistryHooks.onTransform} hook. */
 export type TransformHookInfo<Keys extends string = string> = {
@@ -49,21 +51,25 @@ export type StepHookInfo<Keys extends string = string> = {
 }
 
 /** metadata about a single step in an {@link ExplainResult}. */
-export type ExplainStep<Keys extends string = string> = {
-  readonly from: Keys
-  readonly to: Keys
+export type ExplainStep<FromKey extends string = string, ToKey extends string = FromKey> = {
+  readonly from: FromKey
+  readonly to: ToKey
   readonly cost: number
   readonly label?: string | undefined
   readonly deprecated?: string | boolean | undefined
 }
 
 /** result of {@link Registry.explain}, describing the migration path and its characteristics. */
-export type ExplainResult<Keys extends string = string> = {
-  readonly from: Keys
-  readonly to: Keys
+export type ExplainResult<
+  Keys extends string = string,
+  From extends string = Keys,
+  To extends string = Keys,
+> = {
+  readonly from: From
+  readonly to: To
   readonly path: readonly Keys[] | null
   readonly totalCost: number | null
-  readonly steps: readonly ExplainStep<Keys>[]
+  readonly steps: readonly ExplainStep<NarrowExclude<Keys, To>, NarrowExclude<Keys, From>>[]
   readonly summary: string
 }
 
@@ -76,6 +82,50 @@ export type RegistryHooks<Keys extends string = string> = {
   /** called after each migration step completes (success or failure). */
   readonly onStep?: ((info: StepHookInfo<Keys>) => void) | undefined
 }
+
+/**
+ * guard map: keyed by schema name, each value is either an {@link IdentifyGuard}
+ * or the {@link tryParse} sentinel (which uses schema validation as the guard).
+ */
+export type IdentifyGuardMap<Keys extends string> = Partial<
+  Readonly<Record<Keys, IdentifyGuard | TryParse>>
+>
+
+/**
+ * function form: a single function that returns a schema key or null.
+ * returned keys are verified at runtime against registered schema names.
+ * accepts `string | null` to support helpers like {@link byField} that can't
+ * know the schema keys at definition time.
+ */
+export type IdentifyFn = (value: unknown) => string | null
+
+/** the identify config accepts either a guard map or a single function. */
+export type IdentifyConfig<Keys extends string> = IdentifyGuardMap<Keys> | IdentifyFn
+
+/** metadata attached to a successful {@link Registry.identify} call. */
+export type IdentifyMeta<Keys extends string = string> = {
+  readonly schema: Keys
+}
+
+/** result of {@link Registry.identify}. */
+export type IdentifyResult<Keys extends string = string> = Result<
+  Keys,
+  readonly DobaIssue[],
+  IdentifyMeta<Keys>
+>
+
+/** metadata attached to a successful {@link Registry.identifyAndTransform} call. */
+export type IdentifyTransformMeta<Keys extends string = string> = TransformMeta<Keys> & {
+  /** the source schema detected by identify. */
+  readonly from: Keys
+}
+
+/** result of {@link Registry.identifyAndTransform}. */
+export type IdentifyTransformResult<T, Keys extends string = string> = Result<
+  T,
+  readonly DobaIssue[],
+  IdentifyTransformMeta<Keys>
+>
 
 /** configuration for {@link createRegistry}. */
 export type RegistryConfig<Schemas extends SchemaMap> = {
@@ -92,13 +142,16 @@ export type RegistryConfig<Schemas extends SchemaMap> = {
    * @default false
    */
   readonly debug?: boolean | undefined
+  /**
+   * opt-in schema identification. provide either a guard map (keyed by schema name)
+   * or a single discriminator function. when present, enables {@link Registry.identify}
+   * and {@link Registry.identifyAndTransform} on the registry.
+   */
+  readonly identify?: IdentifyConfig<SchemaKeys<Schemas>> | undefined
 }
 
-/**
- * schema registry that validates data and transforms it between schema versions.
- * created via {@link createRegistry}.
- */
-export type Registry<Schemas extends SchemaMap> = {
+/** base registry methods, always present. */
+type RegistryBase<Schemas extends SchemaMap> = {
   /**
    * transforms a value from one schema to another, resolving the migration path automatically
    * unless an explicit path is provided via options.
@@ -108,7 +161,7 @@ export type Registry<Schemas extends SchemaMap> = {
     from: From,
     to: To,
     options?: TransformOptions<SchemaKeys<Schemas>>,
-  ) => Promise<TransformResult<InferOutput<Schemas[To]>, SchemaKeys<Schemas>>>
+  ) => Promise<TransformResult<InferOutput<Schemas[To]>, SchemaKeys<Schemas>, From, To>>
 
   /** validates a value against a named schema. */
   readonly validate: <K extends SchemaKeys<Schemas>>(
@@ -138,11 +191,42 @@ export type Registry<Schemas extends SchemaMap> = {
   readonly explain: <From extends SchemaKeys<Schemas>, To extends SchemaKeys<Schemas>>(
     from: From,
     to: To,
-  ) => ExplainResult<SchemaKeys<Schemas>>
+  ) => ExplainResult<SchemaKeys<Schemas>, From, To>
 
   /** the schemas this registry was created with. */
   readonly schemas: Schemas
 }
+
+/** methods added to the registry when identify is configured. */
+type RegistryIdentify<Schemas extends SchemaMap> = {
+  /**
+   * identifies which schema an unknown value belongs to by running configured guards.
+   * runs sync guards first, then tryParse schemas as fallback.
+   */
+  readonly identify: (value: unknown) => Promise<IdentifyResult<SchemaKeys<Schemas>>>
+
+  /**
+   * identifies the source schema of an unknown value and transforms it to the target schema in one call.
+   */
+  readonly identifyAndTransform: <To extends SchemaKeys<Schemas>>(
+    value: unknown,
+    to: To,
+    options?: TransformOptions<SchemaKeys<Schemas>>,
+  ) => Promise<IdentifyTransformResult<InferOutput<Schemas[To]>, SchemaKeys<Schemas>>>
+}
+
+/**
+ * schema registry that validates data and transforms it between schema versions.
+ * created via {@link createRegistry}.
+ *
+ * when `identify` is provided in the config, the registry also has
+ * {@link RegistryIdentify.identify identify} and
+ * {@link RegistryIdentify.identifyAndTransform identifyAndTransform} methods.
+ */
+export type Registry<
+  Schemas extends SchemaMap,
+  HasIdentify extends boolean = false,
+> = RegistryBase<Schemas> & (HasIdentify extends true ? RegistryIdentify<Schemas> : unknown)
 
 function typedKeys<T extends Record<string, unknown>>(obj: T): Extract<keyof T, string>[] {
   return Object.keys(obj) as Extract<keyof T, string>[]
@@ -224,8 +308,14 @@ function emptyMeta<Keys extends string>(from: Keys): TransformMeta<Keys> {
  * ```
  */
 export function createRegistry<Schemas extends SchemaMap>(
+  config: RegistryConfig<Schemas> & { readonly identify: IdentifyConfig<SchemaKeys<Schemas>> },
+): Registry<Schemas, true>
+export function createRegistry<Schemas extends SchemaMap>(
   config: RegistryConfig<Schemas>,
-): Registry<Schemas> {
+): Registry<Schemas, false>
+export function createRegistry<Schemas extends SchemaMap>(
+  config: RegistryConfig<Schemas>,
+): Registry<Schemas, boolean> {
   type Keys = SchemaKeys<Schemas>
 
   const { schemas, pathStrategy = 'shortest', hooks, debug } = config
@@ -740,7 +830,102 @@ export function createRegistry<Schemas extends SchemaMap>(
     return { from, to, path, totalCost, steps: explainSteps, summary: lines.join('\n') }
   }
 
-  return {
+  // ---- identify ----
+
+  const identifyConfig = config.identify
+
+  async function identifyValue(value: unknown): Promise<IdentifyResult<Keys>> {
+    if (identifyConfig === undefined) {
+      return err([createIssue('identify_failed', 'identify is not configured on this registry')])
+    }
+
+    // function form: call it directly, verify the key is known
+    if (typeof identifyConfig === 'function') {
+      const key = identifyConfig(value) as Keys | null
+      if (key === null || !has(key)) {
+        return err([createIssue('identify_failed', 'no schema matched the provided value')])
+      }
+      return ok(key, { schema: key })
+    }
+
+    // guard map form: run sync guards first, collect tryParse candidates
+    const tryParseKeys: Keys[] = []
+
+    for (const key of schemaKeys) {
+      const guard = identifyConfig[key]
+      if (guard === undefined) {
+        continue
+      }
+      if (guard === tryParse) {
+        tryParseKeys.push(key)
+        continue
+      }
+      if ((guard as IdentifyGuard)(value)) {
+        return ok(key, { schema: key })
+      }
+    }
+
+    // tryParse fallback: validate against schemas marked with tryParse
+    if (tryParseKeys.length > 0) {
+      const matches: Keys[] = []
+
+      const results = await Promise.all(
+        tryParseKeys.map(async (key) => {
+          const schema = schemas[key] as StandardSchemaV1 | undefined
+          if (schema === undefined) {
+            return null
+          }
+          const validation = schema['~standard'].validate(value)
+          const outcome = validation instanceof Promise ? await validation : validation
+          return outcome.issues === undefined ? key : null
+        }),
+      )
+
+      for (const result of results) {
+        if (result !== null) {
+          matches.push(result)
+        }
+      }
+
+      if (matches.length === 1) {
+        return ok(matches[0] as Keys, { schema: matches[0] as Keys })
+      }
+
+      if (matches.length > 1) {
+        return err([
+          createIssue('identify_ambiguous', `multiple schemas matched: ${matches.join(', ')}`, {
+            matches,
+          }),
+        ])
+      }
+    }
+
+    return err([createIssue('identify_failed', 'no schema matched the provided value')])
+  }
+
+  async function identifyAndTransformValue(
+    value: unknown,
+    to: Keys,
+    options?: TransformOptions<Keys>,
+  ): Promise<IdentifyTransformResult<unknown, Keys>> {
+    const identified = await identifyValue(value)
+    if (!identified.ok) {
+      return identified
+    }
+
+    const from = identified.value
+    const result = await transform(value, from, to, options)
+    if (!result.ok) {
+      return result
+    }
+
+    return ok(result.value, {
+      ...result.meta,
+      from,
+    })
+  }
+
+  const base = {
     transform,
     validate,
     has,
@@ -748,5 +933,14 @@ export function createRegistry<Schemas extends SchemaMap>(
     findPath: resolvePath,
     explain,
     schemas,
-  } as Registry<Schemas>
+  }
+
+  if (identifyConfig !== undefined) {
+    return Object.assign(base, {
+      identify: identifyValue,
+      identifyAndTransform: identifyAndTransformValue,
+    }) as Registry<Schemas, boolean>
+  }
+
+  return base as Registry<Schemas, boolean>
 }

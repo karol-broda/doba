@@ -3,13 +3,28 @@ title: Result
 description: Functional error handling with discriminated unions
 ---
 
-doba uses a functional approach to error handling. Instead of throwing exceptions, operations return a `Result` type.
+doba uses a functional approach to error handling. Instead of throwing exceptions, operations return a `Result` type. All result utilities are available from `dobajs/result`.
 
-## Result types
+## Result
+
+Discriminated union of success and failure:
+
+```ts
+type Result<T, E = unknown, M = unknown> = ResultOk<T, M> | ResultErr<E>
+```
+
+Check `result.ok` to narrow:
+
+```ts
+if (result.ok) {
+  result.value // T
+  result.meta  // M
+} else {
+  result.issues // E
+}
+```
 
 ### ResultOk
-
-A successful result with a typed value and metadata:
 
 ```ts
 type ResultOk<T, M = unknown> = {
@@ -31,8 +46,6 @@ type ResultOk<T, M = unknown> = {
 
 ### ResultErr
 
-A failed result with typed issues:
-
 ```ts
 type ResultErr<E = unknown> = {
   readonly ok: false
@@ -45,7 +58,20 @@ type ResultErr<E = unknown> = {
   issues={['Expected string, received number at "id"', 'Invalid email format at "email"']}
 />
 
-### DobaIssue
+## Specialized result types
+
+Each registry method returns a `Result` with specific value, error, and metadata types:
+
+| Method                 | Result type                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------- |
+| `transform()`          | `TransformResult<T, Keys, From, To>` = `Result<T, DobaIssue[], TransformMeta>` |
+| `validate()`           | `ValidateResult<T, Key>` = `Result<T, DobaIssue[], ValidateMeta>`              |
+| `identify()`           | `IdentifyResult<Keys>` = `Result<Keys, DobaIssue[], IdentifyMeta>`             |
+| `identifyAndTransform()` | `IdentifyTransformResult<T, Keys>` = `Result<T, DobaIssue[], IdentifyTransformMeta>` |
+
+See [Registry API](/docs/api/registry) and [Identify API](/docs/api/identify) for the full type definitions of each.
+
+## DobaIssue
 
 All issues returned by doba use this shape:
 
@@ -53,17 +79,40 @@ All issues returned by doba use this shape:
 type DobaIssue = {
   readonly code: DobaIssueCode
   readonly message: string
-  readonly path?: readonly PropertyKey[]
-  readonly meta?: Record<string, unknown>
+  readonly path?: readonly PropertyKey[] | undefined
+  readonly meta?: Record<string, unknown> | undefined
 }
+```
 
+| Field     | Type                       | Description                                      |
+| --------- | -------------------------- | ------------------------------------------------ |
+| `code`    | `DobaIssueCode`            | Machine-readable error category.                 |
+| `message` | `string`                   | Human-readable description.                      |
+| `path`    | `readonly PropertyKey[]`   | Property path where the issue occurred, if applicable. |
+| `meta`    | `Record<string, unknown>`  | Arbitrary extra context (e.g. reachability info). |
+
+### DobaIssueCode
+
+```ts
 type DobaIssueCode =
   | 'validation_failed'
   | 'transform_failed'
   | 'no_path_found'
   | 'unknown_schema'
   | 'invalid_input'
+  | 'identify_failed'
+  | 'identify_ambiguous'
 ```
+
+| Code                 | When                                                                          | Extra metadata                                |
+| -------------------- | ----------------------------------------------------------------------------- | --------------------------------------------- |
+| `validation_failed`  | Schema validation rejected the value (input, intermediate, or output).        | `path`: property path to the invalid field    |
+| `transform_failed`   | A migration function threw an error.                                          |                                               |
+| `no_path_found`      | No migration path exists between the source and target schemas.               | `reachableFromSource`, `reachableToTarget`    |
+| `unknown_schema`     | A schema key passed to `transform`, `validate`, etc. is not registered.       |                                               |
+| `invalid_input`      | The value or options passed to a method are structurally invalid.             |                                               |
+| `identify_failed`    | No guard matched and no `tryParse` schema validated the value.                |                                               |
+| `identify_ambiguous` | Multiple `tryParse` schemas validated the same value.                         | `matches`: array of conflicting schema keys   |
 
 ## Constructors
 
@@ -72,9 +121,13 @@ type DobaIssueCode =
 Creates a successful result:
 
 ```ts
+function ok<T, M = undefined>(value: T, meta?: M): ResultOk<T, M>
+```
+
+```ts
 import { ok } from 'dobajs/result'
 
-const result = ok(value, meta)
+const result = ok({ id: '1' }, { schema: 'v1' })
 ```
 
 ### err()
@@ -82,16 +135,28 @@ const result = ok(value, meta)
 Creates a failed result:
 
 ```ts
+function err<E>(issues: E): ResultErr<E>
+```
+
+```ts
 import { err } from 'dobajs/result'
 
-const result = err(issues)
+const result = err([{ code: 'validation_failed', message: 'bad input' }])
 ```
 
 ## Type guards
 
-### isOk() / isErr()
+### isOk()
 
-Narrow the result type:
+```ts
+function isOk<T, E, M>(result: Result<T, E, M>): result is ResultOk<T, M>
+```
+
+### isErr()
+
+```ts
+function isErr<T, E, M>(result: Result<T, E, M>): result is ResultErr<E>
+```
 
 ```ts
 import { isOk, isErr } from 'dobajs/result'
@@ -109,17 +174,25 @@ if (isErr(result)) {
 
 ### unwrap()
 
-Extracts the value or throws if it's an error. Use when you're certain the operation succeeded.
+Extracts the value from a successful result, or throws if it failed.
+
+```ts
+function unwrap<T, E, M>(result: Result<T, E, M>): T
+```
 
 ```ts
 import { unwrap } from 'dobajs/result'
 
-const data = unwrap(result)
+const data = unwrap(result) // throws Error if !result.ok
 ```
 
 ### unwrapOr()
 
-Extracts the value or returns a default fallback:
+Extracts the value from a successful result, or returns a default fallback.
+
+```ts
+function unwrapOr<T, E, M>(result: Result<T, E, M>, defaultValue: T): T
+```
 
 ```ts
 import { unwrapOr } from 'dobajs/result'
@@ -129,7 +202,11 @@ const data = unwrapOr(result, fallbackValue)
 
 ### map()
 
-Transforms the value if successful, passes errors through unchanged:
+Transforms the value if successful, passes errors through unchanged.
+
+```ts
+function map<T, U, E, M>(result: Result<T, E, M>, fn: (value: T) => U): Result<U, E, M>
+```
 
 ```ts
 import { map } from 'dobajs/result'
@@ -139,7 +216,11 @@ const email = map(result, (user) => user.email)
 
 ### mapErr()
 
-Transforms the issues if failed, passes successes through unchanged:
+Transforms the issues if failed, passes successes through unchanged.
+
+```ts
+function mapErr<T, E, F, M>(result: Result<T, E, M>, fn: (issues: E) => F): Result<T, F, M>
+```
 
 ```ts
 import { mapErr } from 'dobajs/result'

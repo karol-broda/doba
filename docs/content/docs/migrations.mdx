@@ -13,7 +13,14 @@ Migrations are functions that transform data from one schema to another. They're
 
 Migration keys use the `"source->target"` format. The simplest form is a bare function:
 
-```ts
+```ts twoslash
+import { createRegistry } from 'dobajs'
+import { z } from 'zod'
+
+const dbSchema = z.object({ id: z.string(), email: z.string(), passwordHash: z.string(), role: z.enum(['admin', 'user']) })
+const feSchema = z.object({ id: z.string(), email: z.string(), role: z.enum(['admin', 'user']) })
+const aiSchema = z.object({ id: z.string(), email: z.string(), isAdmin: z.boolean() })
+// ---cut---
 const registry = createRegistry({
   schemas: { database: dbSchema, frontend: feSchema, ai: aiSchema },
   migrations: {

@@ -18,6 +18,7 @@ export type {
 } from './migration.js'
 
 export type {
+  NarrowExclude,
   PathStrategy,
   StepInfo,
   TransformMeta,
@@ -35,7 +36,17 @@ export type {
   StepHookInfo,
   ExplainStep,
   ExplainResult,
+  IdentifyConfig,
+  IdentifyGuardMap,
+  IdentifyFn,
+  IdentifyMeta,
+  IdentifyResult,
+  IdentifyTransformMeta,
+  IdentifyTransformResult,
 } from './registry.js'
 
 export { pipe } from './helpers.js'
 export type { PipeBuilder } from './helpers.js'
+
+export { match, tryParse, byField, firstMatch } from './identify.js'
+export type { IdentifyGuard, Matcher } from './identify.js'

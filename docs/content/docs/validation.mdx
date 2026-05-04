@@ -52,14 +52,28 @@ This is useful when passing explicit paths to catch typos or missing migrations 
 
 Validate any value against a specific schema without transforming:
 
-```ts
+```ts twoslash
+import { createRegistry } from 'dobajs'
+import { z } from 'zod'
+
+const registry = createRegistry({
+  schemas: {
+    frontend: z.object({ id: z.string(), email: z.string(), role: z.enum(['admin', 'user']) }),
+  },
+  migrations: {},
+})
+const data: unknown = { id: '1', email: 'a@b.com', role: 'admin' }
+// ---cut---
 const result = await registry.validate(data, 'frontend')
 
 if (result.ok) {
-  result.value // validated and typed
-  result.meta.schema // "frontend"
+  result.value
+//       ^?
+  result.meta.schema
+//            ^?
 } else {
-  result.issues // DobaIssue[]
+  result.issues
+//       ^?
 }
 ```
 

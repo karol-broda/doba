@@ -11,6 +11,7 @@
     "migrations",
     "path-finding",
     "---Guides---",
+    "identify",
     "validation",
     "context",
     "helpers",
@@ -24,6 +25,7 @@
     "examples/weighted",
     "---API Reference---",
     "api/registry",
+    "api/identify",
     "api/result",
     "api/context"
   ]

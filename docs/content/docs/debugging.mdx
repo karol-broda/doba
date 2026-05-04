@@ -42,8 +42,21 @@ Turn it off when you're done. Or leave it on during development, whatever works 
 
 The `explain` method gives you a full breakdown of what path the registry would take between two schemas, without actually running any migrations.
 
-```ts
+```ts twoslash
+import { createRegistry } from 'dobajs'
+import { z } from 'zod'
+
+const s = z.object({ id: z.string() })
+const registry = createRegistry({
+  schemas: { v1: s, v2: s, v3: s },
+  migrations: {
+    'v1->v2': { migrate: (d) => d, label: 'v1-to-v2-upgrade', preferred: true },
+    'v2->v3': { migrate: (d) => d, label: 'v2-to-v3-upgrade', preferred: true },
+  },
+})
+// ---cut---
 const info = registry.explain('v1', 'v3')
+//    ^?
 
 console.log(info.summary)
 // Path: v1 -> v2 -> v3 (2 steps, total cost: 0)
@@ -53,24 +66,16 @@ console.log(info.summary)
 
 ### What you get back
 
-```ts
-type ExplainResult = {
-  from: string
-  to: string
-  path: string[] | null // the resolved path, or null
-  totalCost: number | null // sum of edge costs
-  steps: ExplainStep[] // per-step breakdown
-  summary: string // human-readable summary
-}
+| Field       | Type                         | Description                              |
+| ----------- | ---------------------------- | ---------------------------------------- |
+| `from`      | `From`                       | Source schema key (literal type).         |
+| `to`        | `To`                         | Target schema key (literal type).        |
+| `path`      | `readonly Keys[] \| null`    | Resolved path, or `null` if none exists. |
+| `totalCost` | `number \| null`             | Sum of edge costs along the path.        |
+| `steps`     | `readonly ExplainStep[]`     | Per-step breakdown with narrowed `from`/`to`. |
+| `summary`   | `string`                     | Human-readable summary.                  |
 
-type ExplainStep = {
-  from: string
-  to: string
-  cost: number
-  label?: string // from migration metadata
-  deprecated?: string | boolean
-}
-```
+Each step includes `from`, `to`, `cost`, and optional `label` and `deprecated` fields. See [`ExplainResult`](/docs/api/registry#explainresult) and [`ExplainStep`](/docs/api/registry#explainstep) for full type definitions.
 
 ### When there's no path
 
@@ -148,15 +153,15 @@ const registry = createRegistry({
 })
 ```
 
-```ts
-type TransformHookInfo = {
-  from: string
-  to: string
-  path: string[] | null // resolved path (null on early errors)
-  durationMs: number // wall clock time for the whole transform
-  ok: boolean // did it succeed?
-}
-```
+| Field        | Type                      | Description                                    |
+| ------------ | ------------------------- | ---------------------------------------------- |
+| `from`       | `Keys`                    | Source schema key.                              |
+| `to`         | `Keys`                    | Target schema key.                              |
+| `path`       | `readonly Keys[] \| null` | Resolved path (`null` on early errors).         |
+| `durationMs` | `number`                  | Wall clock time for the whole transform.        |
+| `ok`         | `boolean`                 | Whether the transform succeeded.                |
+
+See [`TransformHookInfo`](/docs/api/registry#transformhookinfo) for the full type.
 
 ### onStep
 
@@ -171,17 +176,17 @@ hooks: {
 }
 ```
 
-```ts
-type StepHookInfo = {
-  from: string
-  to: string
-  index: number // zero-based step index
-  total: number // total number of steps
-  label?: string // from migration metadata
-  durationMs: number // wall clock time for this step
-  ok: boolean // did this step succeed?
-}
-```
+| Field        | Type     | Description                          |
+| ------------ | -------- | ------------------------------------ |
+| `from`       | `Keys`   | Source schema key for this step.     |
+| `to`         | `Keys`   | Target schema key for this step.     |
+| `index`      | `number` | Zero-based step index.               |
+| `total`      | `number` | Total number of steps.               |
+| `label`      | `string` | From migration metadata, if set.     |
+| `durationMs` | `number` | Wall clock time for this step.       |
+| `ok`         | `boolean`| Whether this step succeeded.         |
+
+See [`StepHookInfo`](/docs/api/registry#stephookinfo) for the full type.
 
 ### onWarning
 

@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @import 'fumadocs-ui/css/neutral.css';
 @import 'fumadocs-ui/css/preset.css';
+@import 'fumadocs-twoslash/twoslash.css';
 
 @theme {
   --font-display: var(--font-display);
@@ -77,6 +78,23 @@ html[data-scroll-behavior='smooth'] {
 /* Shiki code spans */
 .shiki code span {
   border-style: none;
+}
+
+/* Twoslash query line (^?) inline type display */
+.twoslash .twoslash-query-line .twoslash-popup-container {
+  border-color: var(--color-fd-primary);
+  background-color: color-mix(in oklch, var(--color-fd-primary) 8%, var(--color-fd-popover));
+}
+
+.twoslash .twoslash-query-line .twoslash-popup-arrow {
+  border-color: var(--color-fd-primary);
+  background-color: color-mix(in oklch, var(--color-fd-primary) 8%, var(--color-fd-popover));
+}
+
+/* Hide JSDoc descriptions from twoslash hovers, keep only the type signature */
+.twoslash-popup-docs,
+.twoslash-popup-docs-tags {
+  display: none;
 }
 
 /* Scrollbar */

@@ -32,24 +32,24 @@ export type TransformContext<
 }
 
 /** warning emitted during a migration step, included in {@link TransformMeta}. */
-export type WarningInfo<Keys extends string = string> = {
+export type WarningInfo<FromKey extends string = string, ToKey extends string = FromKey> = {
   readonly message: string
-  readonly from: Keys
-  readonly to: Keys
+  readonly from: FromKey
+  readonly to: ToKey
 }
 
 /** records a field that was filled with a default value during migration. */
-export type DefaultedInfo<Keys extends string = string> = {
+export type DefaultedInfo<FromKey extends string = string, ToKey extends string = FromKey> = {
   /** property path to the defaulted field, e.g. `['address', 'zip']`. */
   readonly path: readonly PropertyKey[]
   readonly message: string
-  readonly from: Keys
-  readonly to: Keys
+  readonly from: FromKey
+  readonly to: ToKey
 }
 
 export type TransformState<Keys extends string = string> = {
-  readonly warnings: WarningInfo<Keys>[]
-  readonly defaults: DefaultedInfo<Keys>[]
+  readonly warnings: WarningInfo<Keys, Keys>[]
+  readonly defaults: DefaultedInfo<Keys, Keys>[]
 }
 
 export function createTransformState<Keys extends string>(): TransformState<Keys> {

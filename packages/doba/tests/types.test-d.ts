@@ -1,10 +1,13 @@
 import { describe, it, expectTypeOf } from 'vitest'
 import {
   createRegistry,
+  match,
+  tryParse,
+  byField,
+  firstMatch,
   type Result,
   type ResultOk,
   type ResultErr,
-  type TransformMeta,
   type ValidateResult,
   type ValidateMeta,
   type TransformContext,
@@ -17,6 +20,9 @@ import {
   type Registry,
   type SchemaKeys,
   type MigrationsFor,
+  type IdentifyResult,
+  type IdentifyGuard,
+  type Matcher,
 } from '../src/index.js'
 import type { StandardSchemaV1 } from '../src/standard-schema.js'
 import { ok, err, isOk, isErr } from '../src/result-entry.js'
@@ -27,6 +33,8 @@ declare const databaseSchema: StandardSchemaV1<unknown, DatabaseUser>
 declare const frontendSchema: StandardSchemaV1<unknown, FrontendUser>
 declare const aiSchema: StandardSchemaV1<unknown, AiUser>
 declare const legacySchema: StandardSchemaV1<unknown, LegacyUser>
+declare const alphaSchema: StandardSchemaV1<unknown, { a: string }>
+declare const betaSchema: StandardSchemaV1<unknown, { b: number }>
 
 const testSchemas = {
   database: databaseSchema,
@@ -217,7 +225,10 @@ describe('registry types', () => {
 
     const result = await registry.transform(dbUser, 'database', 'frontend')
     if (result.ok) {
-      expectTypeOf(result.meta).toExtend<TransformMeta>()
+      expectTypeOf(result.meta).toHaveProperty('path')
+      expectTypeOf(result.meta).toHaveProperty('steps')
+      expectTypeOf(result.meta).toHaveProperty('warnings')
+      expectTypeOf(result.meta).toHaveProperty('defaults')
       expectTypeOf(result.meta.path).toExtend<readonly string[]>()
       expectTypeOf(result.meta.steps).toExtend<readonly StepInfo[]>()
       expectTypeOf(result.meta.warnings).toExtend<
@@ -262,6 +273,155 @@ describe('registry types', () => {
     type Keys = 'database' | 'frontend' | 'ai' | 'legacy'
     const path = registry.findPath('database', 'frontend')
     expectTypeOf(path).toEqualTypeOf<readonly Keys[] | null>()
+  })
+})
+
+describe('narrowed from/to types', () => {
+  it('transform warnings narrow from to exclude To and to to exclude From', async () => {
+    const registry = createRegistry({
+      schemas: testSchemas,
+      migrations: {
+        'database->frontend': (value) => ({
+          id: value.id,
+          email: value.email,
+          createdAt: value.createdAt,
+          role: value.role,
+        }),
+      },
+    })
+
+    const dbUser: DatabaseUser = {
+      id: '1',
+      email: 'test@test.com',
+      passwordHash: 'hash',
+      createdAt: '2024-01-01',
+      role: 'admin',
+    }
+
+    const result = await registry.transform(dbUser, 'database', 'frontend')
+    if (result.ok) {
+      const [warning] = result.meta.warnings
+      if (warning) {
+        // from excludes To ("frontend"), to excludes From ("database")
+        expectTypeOf(warning.from).toEqualTypeOf<'database' | 'ai' | 'legacy'>()
+        expectTypeOf(warning.to).toEqualTypeOf<'frontend' | 'ai' | 'legacy'>()
+      }
+    }
+  })
+
+  it('transform steps narrow from and to the same way as warnings', async () => {
+    const registry = createRegistry({
+      schemas: testSchemas,
+      migrations: {
+        'database->frontend': (value) => ({
+          id: value.id,
+          email: value.email,
+          createdAt: value.createdAt,
+          role: value.role,
+        }),
+      },
+    })
+
+    const dbUser: DatabaseUser = {
+      id: '1',
+      email: 'test@test.com',
+      passwordHash: 'hash',
+      createdAt: '2024-01-01',
+      role: 'admin',
+    }
+
+    const result = await registry.transform(dbUser, 'database', 'frontend')
+    if (result.ok) {
+      const [step] = result.meta.steps
+      if (step) {
+        expectTypeOf(step.from).toEqualTypeOf<'database' | 'ai' | 'legacy'>()
+        expectTypeOf(step.to).toEqualTypeOf<'frontend' | 'ai' | 'legacy'>()
+      }
+    }
+  })
+
+  it('transform defaults narrow from and to', async () => {
+    const registry = createRegistry({
+      schemas: testSchemas,
+      migrations: {
+        'database->frontend': (value, ctx) => {
+          ctx.defaulted(['role'], 'set default role')
+          return {
+            id: value.id,
+            email: value.email,
+            createdAt: value.createdAt,
+            role: value.role,
+          }
+        },
+      },
+    })
+
+    const dbUser: DatabaseUser = {
+      id: '1',
+      email: 'test@test.com',
+      passwordHash: 'hash',
+      createdAt: '2024-01-01',
+      role: 'admin',
+    }
+
+    const result = await registry.transform(dbUser, 'database', 'frontend')
+    if (result.ok) {
+      const [defaulted] = result.meta.defaults
+      if (defaulted) {
+        expectTypeOf(defaulted.from).toEqualTypeOf<'database' | 'ai' | 'legacy'>()
+        expectTypeOf(defaulted.to).toEqualTypeOf<'frontend' | 'ai' | 'legacy'>()
+      }
+    }
+  })
+
+  it('two-schema registry narrows from and to to single literals', async () => {
+    const schemaA = alphaSchema
+    const schemaB = betaSchema
+
+    const registry = createRegistry({
+      schemas: { alpha: schemaA, beta: schemaB },
+      migrations: {
+        'alpha->beta': () => ({ b: 1 }),
+      },
+    })
+
+    const result = await registry.transform({ a: 'x' }, 'alpha', 'beta')
+    if (result.ok) {
+      const [warning] = result.meta.warnings
+      if (warning) {
+        expectTypeOf(warning.from).toEqualTypeOf<'alpha'>()
+        expectTypeOf(warning.to).toEqualTypeOf<'beta'>()
+      }
+      const [step] = result.meta.steps
+      if (step) {
+        expectTypeOf(step.from).toEqualTypeOf<'alpha'>()
+        expectTypeOf(step.to).toEqualTypeOf<'beta'>()
+      }
+    }
+  })
+
+  it('explain result narrows from and to', () => {
+    const registry = createRegistry({
+      schemas: testSchemas,
+      migrations: {
+        'database->frontend': (value) => ({
+          id: value.id,
+          email: value.email,
+          createdAt: value.createdAt,
+          role: value.role,
+        }),
+      },
+    })
+
+    const explanation = registry.explain('database', 'frontend')
+    expectTypeOf(explanation.from).toEqualTypeOf<'database'>()
+    expectTypeOf(explanation.to).toEqualTypeOf<'frontend'>()
+
+    const [step] = explanation.steps
+    if (step) {
+      expectTypeOf(step.from).toEqualTypeOf<'database' | 'ai' | 'legacy'>()
+      expectTypeOf(step.to).toEqualTypeOf<'frontend' | 'ai' | 'legacy'>()
+    }
   })
 })
 
@@ -617,5 +777,314 @@ describe('registry config types', () => {
         },
       },
     })
+  })
+})
+
+describe('identify types', () => {
+  type Keys = 'database' | 'frontend' | 'ai' | 'legacy'
+
+  it('registry without identify has no identify methods', () => {
+    const registry = createRegistry({
+      schemas: testSchemas,
+      migrations: {},
+    })
+
+    type Reg = typeof registry
+    expectTypeOf<'identify' extends keyof Reg ? true : false>().toEqualTypeOf<false>()
+    expectTypeOf<'identifyAndTransform' extends keyof Reg ? true : false>().toEqualTypeOf<false>()
+  })
+
+  it('registry with guard map identify has identify methods', () => {
+    const registry = createRegistry({
+      schemas: testSchemas,
+      migrations: {},
+      identify: {
+        database: match.field('passwordHash'),
+        ai: match.field('isAdmin'),
+      },
+    })
+
+    type Reg = typeof registry
+    expectTypeOf<'identify' extends keyof Reg ? true : false>().toEqualTypeOf<true>()
+    expectTypeOf<'identifyAndTransform' extends keyof Reg ? true : false>().toEqualTypeOf<true>()
+  })
+
+  it('registry with function identify has identify methods', () => {
+    const registry = createRegistry({
+      schemas: testSchemas,
+      migrations: {},
+      identify: (_value: unknown) => null as Keys | null,
+    })
+
+    type Reg = typeof registry
+    expectTypeOf<'identify' extends keyof Reg ? true : false>().toEqualTypeOf<true>()
+    expectTypeOf<'identifyAndTransform' extends keyof Reg ? true : false>().toEqualTypeOf<true>()
+  })
+
+  it('identify returns IdentifyResult with correct keys', async () => {
+    const registry = createRegistry({
+      schemas: testSchemas,
+      migrations: {},
+      identify: {
+        database: match.field('passwordHash'),
+      },
+    })
+
+    const result = await registry.identify({})
+    expectTypeOf(result).toExtend<IdentifyResult<Keys>>()
+    if (result.ok) {
+      expectTypeOf(result.value).toEqualTypeOf<Keys>()
+      expectTypeOf(result.meta.schema).toEqualTypeOf<Keys>()
+    } else {
+      expectTypeOf(result.issues).toEqualTypeOf<readonly DobaIssue[]>()
+    }
+  })
+
+  it('identifyAndTransform infers output type from target schema', async () => {
+    const registry = createRegistry({
+      schemas: testSchemas,
+      migrations: {
+        'database->ai': (user) => ({
+          id: user.id,
+          email: user.email,
+          isAdmin: user.role === 'admin',
+        }),
+      },
+      identify: {
+        database: match.field('passwordHash'),
+      },
+    })
+
+    const result = await registry.identifyAndTransform({}, 'ai')
+    if (result.ok) {
+      expectTypeOf(result.value).toEqualTypeOf<AiUser>()
+      expectTypeOf(result.meta.from).toEqualTypeOf<Keys>()
+      expectTypeOf(result.meta.path).toExtend<readonly Keys[]>()
+    }
+  })
+
+  it('guard map keys are constrained to schema keys', () => {
+    createRegistry({
+      schemas: testSchemas,
+      migrations: {},
+      identify: {
+        database: match.field('passwordHash'),
+        // @ts-expect-error 'typo' is not a valid schema key
+        typo: match.field('something'),
+      },
+    })
+  })
+
+  it('tryParse is accepted in guard map', () => {
+    createRegistry({
+      schemas: testSchemas,
+      migrations: {},
+      identify: {
+        database: tryParse,
+        frontend: match.field('createdAt'),
+      },
+    })
+  })
+
+  it('byField returns function compatible with identify', () => {
+    createRegistry({
+      schemas: testSchemas,
+      migrations: {},
+      identify: byField('version'),
+    })
+  })
+})
+
+describe('identify advanced types', () => {
+  type Keys = 'database' | 'frontend' | 'ai' | 'legacy'
+
+  it('match returns Matcher and is callable as boolean predicate', () => {
+    expectTypeOf(match).toExtend<Matcher>()
+    expectTypeOf(match).toBeCallableWith({} as unknown)
+    expectTypeOf(match({} as unknown)).toEqualTypeOf<boolean>()
+  })
+
+  it('match chain returns Matcher', () => {
+    const chained = match
+      .field('name')
+      .type('object')
+      .fields('a', 'b')
+      .test(() => true)
+    expectTypeOf(chained).toExtend<Matcher>()
+    expectTypeOf(chained({} as unknown)).toEqualTypeOf<boolean>()
+  })
+
+  it('byField returns (value: unknown) => string | null', () => {
+    const fn = byField('version')
+    expectTypeOf(fn).toEqualTypeOf<(value: unknown) => string | null>()
+
+    const fnWithPrefix = byField('version', { prefix: 'v' })
+    expectTypeOf(fnWithPrefix).toEqualTypeOf<(value: unknown) => string | null>()
+
+    const fnWithMap = byField('type', { map: { UserDB: 'database' } })
+    expectTypeOf(fnWithMap).toEqualTypeOf<(value: unknown) => string | null>()
+  })
+
+  it('firstMatch returns (value: unknown) => string | null', () => {
+    const fn = firstMatch(byField('_tag'), (v) => (typeof v === 'string' ? 'name' : null))
+    expectTypeOf(fn).toEqualTypeOf<(value: unknown) => string | null>()
+  })
+
+  it('guard map values must be IdentifyGuard or tryParse', () => {
+    // IdentifyGuard is (value: unknown) => boolean
+    expectTypeOf<IdentifyGuard>().toEqualTypeOf<(value: unknown) => boolean>()
+
+    // match produces IdentifyGuard-compatible values
+    expectTypeOf(match.field('x')).toExtend<IdentifyGuard>()
+
+    // a plain function returning boolean is compatible
+    // oxlint-disable-next-line unicorn/consistent-function-scoping -- testing type compatibility
+    const guard: IdentifyGuard = (_v: unknown) => true
+    expectTypeOf(guard).toExtend<IdentifyGuard>()
+  })
+
+  it('identifyAndTransform result value is typed to the target schema output', async () => {
+    const registry = createRegistry({
+      schemas: testSchemas,
+      migrations: {
+        'database->ai': (user) => ({
+          id: user.id,
+          email: user.email,
+          isAdmin: user.role === 'admin',
+        }),
+      },
+      identify: {
+        database: match.field('passwordHash'),
+      },
+    })
+
+    const result = await registry.identifyAndTransform({}, 'ai')
+    if (result.ok) {
+      expectTypeOf(result.value).toEqualTypeOf<AiUser>()
+      expectTypeOf(result.value.id).toEqualTypeOf<string>()
+      expectTypeOf(result.value.email).toEqualTypeOf<string>()
+      expectTypeOf(result.value.isAdmin).toEqualTypeOf<boolean>()
+      // @ts-expect-error passwordHash does not exist on AiUser
+      result.value.passwordHash
+    }
+  })
+
+  it('identifyAndTransform meta has from field typed as Keys', async () => {
+    const registry = createRegistry({
+      schemas: testSchemas,
+      migrations: {},
+      identify: {
+        database: match.field('passwordHash'),
+      },
+    })
+
+    const result = await registry.identifyAndTransform({}, 'frontend')
+    if (result.ok) {
+      expectTypeOf(result.meta.from).toEqualTypeOf<Keys>()
+      expectTypeOf(result.meta.path).toExtend<readonly Keys[]>()
+      expectTypeOf(result.meta.steps).toExtend<readonly StepInfo[]>()
+    }
+  })
+
+  it('identify result value is typed as Keys', async () => {
+    const registry = createRegistry({
+      schemas: testSchemas,
+      migrations: {},
+      identify: {
+        ai: match.field('isAdmin'),
+      },
+    })
+
+    const result = await registry.identify({})
+    if (result.ok) {
+      expectTypeOf(result.value).toEqualTypeOf<Keys>()
+    } else {
+      expectTypeOf(result.issues).toEqualTypeOf<readonly DobaIssue[]>()
+    }
+  })
+
+  it('Registry with identify guard map has both identify methods', () => {
+    const registry = createRegistry({
+      schemas: testSchemas,
+      migrations: {},
+      identify: {
+        database: match.field('passwordHash'),
+        ai: match.field('isAdmin'),
+      },
+    })
+
+    type Reg = typeof registry
+    expectTypeOf<'identify' extends keyof Reg ? true : false>().toEqualTypeOf<true>()
+    expectTypeOf<'identifyAndTransform' extends keyof Reg ? true : false>().toEqualTypeOf<true>()
+    expectTypeOf(registry.identify).toBeFunction()
+    expectTypeOf(registry.identifyAndTransform).toBeFunction()
+  })
+
+  it('Registry with identify byField has both identify methods', () => {
+    const registry = createRegistry({
+      schemas: testSchemas,
+      migrations: {},
+      identify: byField('version'),
+    })
+
+    type Reg = typeof registry
+    expectTypeOf<'identify' extends keyof Reg ? true : false>().toEqualTypeOf<true>()
+    expectTypeOf<'identifyAndTransform' extends keyof Reg ? true : false>().toEqualTypeOf<true>()
+    expectTypeOf(registry.identify).toBeFunction()
+    expectTypeOf(registry.identifyAndTransform).toBeFunction()
+  })
+
+  it('Registry with identify firstMatch has both identify methods', () => {
+    const registry = createRegistry({
+      schemas: testSchemas,
+      migrations: {},
+      identify: firstMatch(byField('_tag'), byField('version')),
+    })
+
+    type Reg = typeof registry
+    expectTypeOf<'identify' extends keyof Reg ? true : false>().toEqualTypeOf<true>()
+    expectTypeOf<'identifyAndTransform' extends keyof Reg ? true : false>().toEqualTypeOf<true>()
+    expectTypeOf(registry.identify).toBeFunction()
+    expectTypeOf(registry.identifyAndTransform).toBeFunction()
+  })
+
+  it('Registry without identify does NOT have identify or identifyAndTransform', () => {
+    const registry = createRegistry({
+      schemas: testSchemas,
+      migrations: {},
+    })
+
+    type Reg = typeof registry
+    expectTypeOf<'identify' extends keyof Reg ? true : false>().toEqualTypeOf<false>()
+    expectTypeOf<'identifyAndTransform' extends keyof Reg ? true : false>().toEqualTypeOf<false>()
+
+    // also verify via the Registry type directly
+    type NoIdentify = Registry<typeof testSchemas, false>
+    expectTypeOf<'identify' extends keyof NoIdentify ? true : false>().toEqualTypeOf<false>()
+    expectTypeOf<
+      'identifyAndTransform' extends keyof NoIdentify ? true : false
+    >().toEqualTypeOf<false>()
+
+    type WithIdentify = Registry<typeof testSchemas, true>
+    expectTypeOf<'identify' extends keyof WithIdentify ? true : false>().toEqualTypeOf<true>()
+    expectTypeOf<
+      'identifyAndTransform' extends keyof WithIdentify ? true : false
+    >().toEqualTypeOf<true>()
+  })
+
+  it('tryParse is accepted alongside regular guards in the guard map', () => {
+    const registry = createRegistry({
+      schemas: testSchemas,
+      migrations: {},
+      identify: {
+        database: tryParse,
+        frontend: match.field('createdAt'),
+        ai: (_value: unknown) => typeof _value === 'object',
+      },
+    })
+
+    type Reg = typeof registry
+    expectTypeOf<'identify' extends keyof Reg ? true : false>().toEqualTypeOf<true>()
+    expectTypeOf<'identifyAndTransform' extends keyof Reg ? true : false>().toEqualTypeOf<true>()
   })
 })

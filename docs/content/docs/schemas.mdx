@@ -114,15 +114,30 @@ const registry = createRegistry({
 
 ## Checking schemas
 
-```ts
-registry.has('database') // true
-registry.has('unknown') // false (type error at compile time)
+```ts twoslash
+import { createRegistry } from 'dobajs'
+import { z } from 'zod'
+
+const registry = createRegistry({
+  schemas: {
+    database: z.object({ id: z.string(), email: z.string() }),
+    frontend: z.object({ id: z.string(), email: z.string() }),
+  },
+  migrations: {},
+})
+// ---cut---
+const hasDb = registry.has('database')
+//    ^?
 ```
 
 <Callout type="info">
   Schema keys are fully typed. Passing an unknown key to `has()`, `transform()`, or `validate()` is
   a compile-time error.
 </Callout>
+
+## Identifying schemas
+
+When you have unknown data and need to figure out which schema it belongs to, see [Schema Identification](/docs/identify). You can configure guards per schema or use a discriminator function to route unknown values.
 
 ## Standard Schema support
 

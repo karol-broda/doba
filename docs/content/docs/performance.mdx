@@ -33,6 +33,27 @@ All benchmarks run on Apple M3 Pro using [mitata](https://github.com/evanwashere
 
 Lookups are O(1) regardless of registry size. Transforms scale linearly with chain depth at roughly ~140ns per hop. The graph is built once at registry creation, so path resolution doesn't rebuild anything.
 
+## Identify
+
+Schema identification is fast across all strategies. Sync guards dominate the hot path.
+
+<BenchmarkTable
+  rows={[
+    { operation: 'identify (guard map)', time: '~120ns', throughput: '8.4M ops/sec' },
+    { operation: 'identify (function)', time: '~195ns', throughput: '5.1M ops/sec' },
+    { operation: 'identify (byField)', time: '~205ns', throughput: '4.9M ops/sec' },
+    { operation: 'identify (tryParse)', time: '~435ns', throughput: '2.3M ops/sec' },
+    { operation: 'identifyAndTransform (1 hop)', time: '~816ns', throughput: '1.2M ops/sec' },
+    { operation: 'match chain execution', time: '~10--30ns', throughput: 'predicate only' },
+  ]}
+/>
+
+Guard map with `match` is the fastest because guards are simple predicates with zero allocation. `tryParse` is ~2x slower since it runs actual schema validation. `identifyAndTransform` adds negligible overhead over calling `identify` then `transform` separately.
+
+<Callout type="info">
+  Build `match` chains at module level, not inside hot loops. Constructing a 4-step chain costs ~1.6us (array copies + `Object.assign`), but executing one is ~30ns.
+</Callout>
+
 ## Tradeoffs
 
 Every feature has a cost. Here's what each one adds.
@@ -92,7 +113,8 @@ These measure the cost of migrating complex nested data through a single transfo
 ## Run it yourself
 
 ```bash
-bun run bench              # core operations
+bun run bench                  # core operations
 bun tests/features.bench.ts   # feature overhead, explain, pipe, hooks
+bun tests/identify.bench.ts   # identify strategies, match, tryParse
 bun tests/stress.bench.ts     # extreme scale, recursive structures
 ```
