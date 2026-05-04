@@ -7,7 +7,7 @@ import { Callout } from 'fumadocs-ui/components/callout'
 
 The `Registry` is the central piece of **doba**. It holds your schemas and migration functions, and provides methods to transform data between them.
 
-## createRegistry
+## createRegistry()
 
 Creates a new registry instance. The migration graph is pre-computed at construction time.
 
@@ -29,23 +29,58 @@ const registry = createRegistry({
 })
 ```
 
-### RegistryConfig
-
-| Option         | Type                     | Description                                                       |
-| -------------- | ------------------------ | ----------------------------------------------------------------- |
-| `schemas`      | `SchemaMap`              | Map of schema names to Standard Schema compliant objects.         |
-| `migrations`   | `MigrationsFor<Schemas>` | Migration definitions. Keys use `from->to` or `from<->to` syntax. |
-| `pathStrategy` | `'shortest' \| 'direct'` | How to find migration paths. Default: `'shortest'`.               |
-| `hooks`        | `RegistryHooks`          | Lifecycle hooks.                                                  |
-| `debug`        | `boolean`                | Logs all hook activity to the console. Default: `false`.          |
-
-### RegistryHooks
+When `identify` is provided, the return type gains `identify()` and `identifyAndTransform()` methods. When omitted, those methods don't exist on the type.
 
 ```ts
-type RegistryHooks = {
-  onWarning?: (message: string, from: string, to: string) => void
-  onTransform?: (info: TransformHookInfo) => void
-  onStep?: (info: StepHookInfo) => void
+function createRegistry<Schemas extends SchemaMap>(
+  config: RegistryConfig<Schemas> & { identify: IdentifyConfig<SchemaKeys<Schemas>> },
+): Registry<Schemas, true>
+
+function createRegistry<Schemas extends SchemaMap>(
+  config: RegistryConfig<Schemas>,
+): Registry<Schemas, false>
+```
+
+## Registry
+
+```ts
+type Registry<
+  Schemas extends SchemaMap,
+  HasIdentify extends boolean = false,
+> = RegistryBase<Schemas> & (HasIdentify extends true ? RegistryIdentify<Schemas> : unknown)
+```
+
+`RegistryBase` contains the methods that are always present (`transform`, `validate`, `has`, `hasMigration`, `findPath`, `explain`, `schemas`). `RegistryIdentify` adds `identify` and `identifyAndTransform` when the `identify` config option is set. Both are internal types that get merged into the public `Registry` type.
+
+## RegistryConfig
+
+```ts
+type RegistryConfig<Schemas extends SchemaMap> = {
+  readonly schemas: Schemas
+  readonly migrations: MigrationsFor<Schemas>
+  readonly pathStrategy?: PathStrategy | undefined
+  readonly hooks?: RegistryHooks<SchemaKeys<Schemas>> | undefined
+  readonly debug?: boolean | undefined
+  readonly identify?: IdentifyConfig<SchemaKeys<Schemas>> | undefined
+}
+```
+
+| Option         | Type                     | Default      | Description                                                       |
+| -------------- | ------------------------ | ------------ | ----------------------------------------------------------------- |
+| `schemas`      | `SchemaMap`              | *(required)* | Map of schema names to Standard Schema compliant objects.         |
+| `migrations`   | `MigrationsFor<Schemas>` | *(required)* | Migration definitions. Keys use `from->to` or `from<->to` syntax. |
+| `pathStrategy` | `'shortest' \| 'direct'` | `'shortest'` | How to find migration paths.                                      |
+| `hooks`        | `RegistryHooks`          |              | Lifecycle hooks. See [Debugging](/docs/debugging).                |
+| `debug`        | `boolean`                | `false`      | Logs all hook activity to the console.                            |
+| `identify`     | `IdentifyConfig`         |              | Guard map or function for schema detection. See [Identification](/docs/identify). |
+
+## RegistryHooks
+
+```ts
+type RegistryHooks<Keys extends string = string> = {
+  readonly onWarning?: ((message: string, from: Keys, to: Keys) => void) | undefined
+  readonly onTransform?: ((info: TransformHookInfo<Keys>) => void) | undefined
+  readonly onStep?: ((info: StepHookInfo<Keys>) => void) | undefined
 }
 ```
 
@@ -55,7 +90,33 @@ type RegistryHooks = {
 | `onTransform` | After every transform completes (success or failure). Includes timing and path info. |
 | `onStep`      | After each migration step completes. Includes step index, label, and timing.         |
 
-See [Debugging](/docs/debugging) for usage examples and type definitions.
+See [Debugging](/docs/debugging) for usage examples.
+
+### TransformHookInfo
+
+```ts
+type TransformHookInfo<Keys extends string = string> = {
+  readonly from: Keys
+  readonly to: Keys
+  readonly path: readonly Keys[] | null
+  readonly durationMs: number
+  readonly ok: boolean
+}
+```
+
+### StepHookInfo
+
+```ts
+type StepHookInfo<Keys extends string = string> = {
+  readonly from: Keys
+  readonly to: Keys
+  readonly index: number
+  readonly total: number
+  readonly label?: string | undefined
+  readonly durationMs: number
+  readonly ok: boolean
+}
+```
 
 ## Properties
 
@@ -74,53 +135,75 @@ registry.schemas // { v1: ZodObject<...>, v2: ZodObject<...> }
 Transforms data from one schema to another.
 
 ```ts
-const result = await registry.transform(data, 'v1', 'v2', options?)
+registry.transform<From, To>(
+  value: InferOutput<Schemas[From]>,
+  from: From,
+  to: To,
+  options?: TransformOptions<Keys>,
+): Promise<TransformResult<InferOutput<Schemas[To]>, Keys, From, To>>
 ```
 
-Returns a `TransformResult`, a discriminated union of success (with value and metadata) or failure (with issues).
+Returns a [`TransformResult`](#transformresult). The `From` and `To` type parameters are inferred from the arguments, which narrows the `from`/`to` fields throughout the result metadata.
+
+```ts
+const result = await registry.transform(data, 'v1', 'v2')
+
+if (result.ok) {
+  result.value          // typed as InferOutput<Schemas['v2']>
+  result.meta.path      // readonly Keys[]
+  result.meta.steps     // StepInfo with narrowed from/to
+  result.meta.warnings  // WarningInfo with narrowed from/to
+  result.meta.defaults  // DefaultedInfo with narrowed from/to
+}
+```
 
 #### TransformOptions
+
+```ts
+type TransformOptions<Keys extends string> = {
+  readonly path?: readonly Keys[] | undefined
+  readonly pathStrategy?: PathStrategy | undefined
+  readonly validate?: 'none' | 'end' | 'each' | undefined
+  readonly validatePath?: boolean | undefined
+}
+```
 
 | Option         | Type                        | Default    | Description                                                   |
 | -------------- | --------------------------- | ---------- | ------------------------------------------------------------- |
 | `validate`     | `'none' \| 'end' \| 'each'` | `'end'`    | When to validate against schemas.                             |
-| `path`         | `string[]`                  | (auto)     | Explicit migration path. Overrides automatic path finding.    |
-| `pathStrategy` | `'shortest' \| 'direct'`    | (registry) | Override the registry-level path strategy for this transform. |
+| `path`         | `readonly Keys[]`           | *(auto)*   | Explicit migration path. Overrides automatic path finding.    |
+| `pathStrategy` | `'shortest' \| 'direct'`    | *(registry)* | Override the registry-level path strategy for this transform. |
 | `validatePath` | `boolean`                   | `false`    | Check that every step has a migration before executing.       |
-
-#### TransformMeta
-
-On success, `result.meta` contains:
-
-```ts
-type TransformMeta = {
-  path: string[] // schema keys traversed
-  steps: StepInfo[] // per-step metadata
-  warnings: WarningInfo[] // warnings from ctx.warn() and deprecated migrations
-  defaults: DefaultedInfo[] // fields filled via ctx.defaulted()
-}
-
-type StepInfo = {
-  from: string
-  to: string
-  label?: string // from migration metadata
-  deprecated?: string | boolean
-}
-```
 
 ### validate()
 
 Validates a value against a registered schema without transforming.
 
 ```ts
-const result = await registry.validate(data, 'v2')
+registry.validate<K>(
+  value: unknown,
+  schema: K,
+): Promise<ValidateResult<InferOutput<Schemas[K]>, K>>
 ```
 
-Returns a `ValidateResult` with `meta.schema` set to the schema key.
+Returns a [`ValidateResult`](#validateresult) with `meta.schema` set to the schema key.
+
+```ts
+const result = await registry.validate(data, 'v2')
+
+if (result.ok) {
+  result.value       // typed as InferOutput<Schemas['v2']>
+  result.meta.schema // 'v2'
+}
+```
 
 ### has()
 
 Type guard to check if a schema name is registered.
+
+```ts
+registry.has<K>(schema: K): schema is K & SchemaKeys<Schemas>
+```
 
 ```ts
 if (registry.has(name)) {
@@ -133,6 +216,10 @@ if (registry.has(name)) {
 Checks if a **direct** migration exists between two schemas. Does not consider multi-step paths.
 
 ```ts
+registry.hasMigration(from: From, to: To): boolean
+```
+
+```ts
 registry.hasMigration('v1', 'v2') // true
 registry.hasMigration('v2', 'v1') // false (unless defined)
 ```
@@ -140,6 +227,10 @@ registry.hasMigration('v2', 'v1') // false (unless defined)
 ### findPath()
 
 Returns the sequence of schemas needed to migrate from one to another, or `null` if no path exists.
+
+```ts
+registry.findPath(from: From, to: To): readonly Keys[] | null
+```
 
 ```ts
 const path = registry.findPath('v1', 'v3')
@@ -153,6 +244,13 @@ Uses the registry's `pathStrategy` to determine the algorithm (BFS or Dijkstra).
 Returns a diagnostic description of the migration path between two schemas without running any migrations. Includes costs, labels, deprecation info, and a human-readable summary.
 
 ```ts
+registry.explain<From, To>(
+  from: From,
+  to: To,
+): ExplainResult<Keys, From, To>
+```
+
+```ts
 const info = registry.explain('v1', 'v3')
 console.log(info.summary)
 // Path: v1 -> v2 -> v3 (2 steps, total cost: 0)
@@ -163,3 +261,174 @@ console.log(info.summary)
 When no path exists, the summary includes which schemas are reachable from the source and which schemas can reach the target.
 
 See [Debugging](/docs/debugging) for full details.
+
+### identify()
+
+Detects which schema an unknown value belongs to. **Only present when `identify` is configured.**
+
+```ts
+registry.identify(value: unknown): Promise<IdentifyResult<Keys>>
+```
+
+Runs configured guards synchronously first, then tries `tryParse` schemas in parallel if no sync guard matched.
+
+```ts
+const result = await registry.identify(unknownData)
+
+if (result.ok) {
+  result.value       // schema key, e.g. "database"
+  result.meta.schema // same as result.value
+}
+```
+
+Returns an [`IdentifyResult`](/docs/api/identify#identifyresult). Fails with `identify_failed` if no guard matches, or `identify_ambiguous` if multiple `tryParse` schemas validate.
+
+### identifyAndTransform()
+
+Identifies the source schema and transforms to a target in one call. **Only present when `identify` is configured.**
+
+```ts
+registry.identifyAndTransform<To>(
+  value: unknown,
+  to: To,
+  options?: TransformOptions<Keys>,
+): Promise<IdentifyTransformResult<InferOutput<Schemas[To]>, Keys>>
+```
+
+Returns an [`IdentifyTransformResult`](/docs/api/identify#identifytransformresult) with the same shape as `TransformResult`, plus `meta.from` indicating the detected source schema. Accepts the same `TransformOptions` as `transform()`.
+
+```ts
+const result = await registry.identifyAndTransform(unknownData, 'frontend')
+
+if (result.ok) {
+  result.value      // typed as FrontendUser
+  result.meta.from  // "database" (detected source)
+  result.meta.path  // ["database", "frontend"]
+  result.meta.steps // per-step metadata
+}
+```
+
+See [Schema Identification](/docs/identify) for the full guide.
+
+## Result types
+
+### TransformResult
+
+```ts
+type TransformResult<
+  T,
+  Keys extends string = string,
+  From extends string = Keys,
+  To extends string = Keys,
+> = Result<T, readonly DobaIssue[], TransformMeta<Keys, From, To>>
+```
+
+On success, carries the transformed value typed to the target schema output, plus [`TransformMeta`](#transformmeta). On failure, carries an array of [`DobaIssue`](/docs/api/result#dobaissue).
+
+### TransformMeta
+
+```ts
+type TransformMeta<
+  Keys extends string = string,
+  From extends string = Keys,
+  To extends string = Keys,
+> = {
+  readonly path: readonly Keys[]
+  readonly steps: readonly StepInfo<NarrowExclude<Keys, To>, NarrowExclude<Keys, From>>[]
+  readonly warnings: readonly WarningInfo<NarrowExclude<Keys, To>, NarrowExclude<Keys, From>>[]
+  readonly defaults: readonly DefaultedInfo<NarrowExclude<Keys, To>, NarrowExclude<Keys, From>>[]
+}
+```
+
+| Field      | Type                        | Description                                                        |
+| ---------- | --------------------------- | ------------------------------------------------------------------ |
+| `path`     | `readonly Keys[]`           | Ordered schema keys traversed, e.g. `['v1', 'v2', 'v3']`.         |
+| `steps`    | `readonly StepInfo[]`       | Per-step metadata for each migration executed.                     |
+| `warnings` | `readonly WarningInfo[]`    | Warnings from `ctx.warn()` and deprecated migrations.              |
+| `defaults` | `readonly DefaultedInfo[]`  | Fields filled with default values via `ctx.defaulted()`.           |
+
+The `From` and `To` params flow through from `TransformResult`. The `from`/`to` fields on each step and warning are narrowed via [`NarrowExclude`](#narrowexclude) to exclude the endpoints of the overall transform.
+
+### StepInfo
+
+```ts
+type StepInfo<FromKey extends string = string, ToKey extends string = FromKey> = {
+  readonly from: FromKey
+  readonly to: ToKey
+  readonly label?: string | undefined
+  readonly deprecated?: string | boolean | undefined
+}
+```
+
+### ExplainResult
+
+```ts
+type ExplainResult<
+  Keys extends string = string,
+  From extends string = Keys,
+  To extends string = Keys,
+> = {
+  readonly from: From
+  readonly to: To
+  readonly path: readonly Keys[] | null
+  readonly totalCost: number | null
+  readonly steps: readonly ExplainStep<NarrowExclude<Keys, To>, NarrowExclude<Keys, From>>[]
+  readonly summary: string
+}
+```
+
+### ExplainStep
+
+```ts
+type ExplainStep<FromKey extends string = string, ToKey extends string = FromKey> = {
+  readonly from: FromKey
+  readonly to: ToKey
+  readonly cost: number
+  readonly label?: string | undefined
+  readonly deprecated?: string | boolean | undefined
+}
+```
+
+### ValidateResult
+
+```ts
+type ValidateResult<T, Key extends string = string> = Result<
+  T,
+  readonly DobaIssue[],
+  ValidateMeta<Key>
+>
+```
+
+### ValidateMeta
+
+```ts
+type ValidateMeta<Key extends string = string> = {
+  readonly schema: Key
+}
+```
+
+## Utility types
+
+### NarrowExclude
+
+```ts
+type NarrowExclude<T extends string, U extends string> =
+  [Exclude<T, U>] extends [never] ? T : Exclude<T, U>
+```
+
+Narrows `T` by excluding `U`, falling back to `T` when the result would be `never`. Used throughout `TransformMeta`, `StepInfo`, `WarningInfo`, `DefaultedInfo`, and `ExplainResult` to narrow `from`/`to` fields on steps and warnings.
+
+For example, when you call `transform(data, 'v1', 'v3')` on a registry with keys `'v1' | 'v2' | 'v3'`:
+- `step.from` is typed as `NarrowExclude<Keys, 'v3'>` = `'v1' | 'v2'` (the target can't appear as a step source)
+- `step.to` is typed as `NarrowExclude<Keys, 'v1'>` = `'v2' | 'v3'` (the source can't appear as a step target)
+
+### PathStrategy
+
+```ts
+type PathStrategy = 'direct' | 'shortest'
+```
+
+| Value        | Algorithm | Description                                                   |
+| ------------ | --------- | ------------------------------------------------------------- |
+| `'shortest'` | BFS/Dijkstra | Finds the optimal path through the migration graph. Default. |
+| `'direct'`   | Lookup    | Only uses a direct migration between two schemas.            |

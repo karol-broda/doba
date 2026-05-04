@@ -13,24 +13,7 @@ import {
   dynamicMigrations,
   type DatabaseUser,
 } from './helpers.js'
-
-type Node = { id: string; data: string }
-
-const nodeSchema = createMockSchema<Node>((value) => {
-  if (value === null || value === undefined || typeof value !== 'object') {
-    return { ok: false, message: 'expected object' }
-  }
-  const rec = value as Record<string, unknown>
-  if (typeof rec['id'] !== 'string') {
-    return { ok: false, message: 'id must be string' }
-  }
-  if (typeof rec['data'] !== 'string') {
-    return { ok: false, message: 'data must be string' }
-  }
-  return { ok: true, value: value as Node }
-})
-
-const sampleNode: Node = { id: 'test-1', data: 'payload' }
+import { type Node, nodeSchema, sampleNode, createLinearChain } from './bench-helpers.js'
 
 // ---------- registries ----------
 
@@ -39,7 +22,6 @@ const registry = createRegistry({
   migrations: userMigrations,
 })
 
-// registry with hooks
 const hookedRegistry = createRegistry({
   schemas: userSchemas,
   migrations: userMigrations,
@@ -50,14 +32,12 @@ const hookedRegistry = createRegistry({
   },
 })
 
-// registry with debug mode
 const debugRegistry = createRegistry({
   schemas: userSchemas,
   migrations: userMigrations,
   debug: true,
 })
 
-// pipe builder registry
 const pipeRegistry = createRegistry({
   schemas: {
     a: createMockSchema<{ id: string; userName: string; legacyId: string; isAdmin: boolean }>(
@@ -85,12 +65,12 @@ const pipeRegistry = createRegistry({
           .rename('userName', 'name')
           .drop('legacyId')
           .add('email', 'unknown@example.com')
-          .map('isAdmin', (v) => (v ? 'admin' : 'user')),
+          .map('isAdmin', (v) => (v ? 'admin' : 'user'))
+          .rename('isAdmin', 'role'),
     },
   },
 })
 
-// bare function equivalent for comparison
 const bareFnRegistry = createRegistry({
   schemas: {
     a: createMockSchema<{ id: string; userName: string; legacyId: string; isAdmin: boolean }>(
@@ -123,7 +103,6 @@ const bareFnRegistry = createRegistry({
 
 const pipeInput = { id: 'u1', userName: 'alice', legacyId: 'old-1', isAdmin: true }
 
-// bidirectional registry
 const bidiRegistry = createRegistry({
   schemas: {
     celsius: createMockSchema<{ value: number }>((v) => {
@@ -147,7 +126,6 @@ const bidiRegistry = createRegistry({
   }),
 })
 
-// weighted graph registry (Dijkstra path)
 function createWeightedRegistry() {
   return createRegistry({
     schemas: {
@@ -169,23 +147,8 @@ function createWeightedRegistry() {
 }
 
 const weightedRegistry = createWeightedRegistry()
+const chain25 = createLinearChain(25)
 
-// chain for explicit path benchmarks
-function createChain(length: number) {
-  const schemas: Record<string, typeof nodeSchema> = {}
-  const migrations: Record<string, unknown> = {}
-  for (let i = 0; i < length; i++) {
-    schemas[`s${i}`] = nodeSchema
-  }
-  for (let i = 0; i < length - 1; i++) {
-    migrations[`s${i}->s${i + 1}`] = (v: Node) => ({ id: v.id, data: `${v.data}.` })
-  }
-  return createRegistry({ schemas, migrations: dynamicMigrations(migrations) })
-}
-
-const chain25 = createChain(25)
-
-// registry with context-heavy migrations
 const contextRegistry = createRegistry({
   schemas: { a: nodeSchema, b: nodeSchema, c: nodeSchema },
   migrations: dynamicMigrations({

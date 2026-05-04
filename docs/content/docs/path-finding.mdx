@@ -41,11 +41,25 @@ Transforming from `legacy` to `ai` automatically chains through every intermedia
   ]}
 />
 
-```ts
+```ts twoslash
+import { createRegistry } from 'dobajs'
+import { z } from 'zod'
+
+const s = z.object({ id: z.string() })
+const registry = createRegistry({
+  schemas: { legacy: s, database: s, frontend: s, ai: s },
+  migrations: {
+    'legacy->database': (d) => d,
+    'database->frontend': (d) => d,
+    'frontend->ai': (d) => d,
+  },
+})
+const legacyData = { id: '1' }
+// ---cut---
 const result = await registry.transform(legacyData, 'legacy', 'ai')
 
 if (result.ok) {
-  console.log(result.meta.path)
+  result.meta.path
   // ["legacy", "database", "frontend", "ai"]
 }
 ```

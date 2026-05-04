@@ -1,0 +1,281 @@
+---
+title: Identify
+description: API reference for schema identification
+---
+
+import { Callout } from 'fumadocs-ui/components/callout'
+
+API reference for the [Schema Identification](/docs/identify) feature. All exports are available from `dobajs`.
+
+## Configuration
+
+### IdentifyConfig
+
+The `identify` option on [`RegistryConfig`](/docs/api/registry#registryconfig) accepts one of two forms:
+
+```ts
+type IdentifyConfig<Keys extends string> =
+  | IdentifyGuardMap<Keys>   // guard map: per-schema predicates
+  | IdentifyFn               // function: single discriminator
+```
+
+When provided, the registry gains `identify()` and `identifyAndTransform()` methods. When omitted, those methods don't exist on the type.
+
+### IdentifyGuardMap
+
+A partial record mapping schema keys to guards. Each value is either an [`IdentifyGuard`](#identifyguard) or the [`tryParse`](#tryparse) sentinel.
+
+```ts
+type IdentifyGuardMap<Keys extends string> = Partial<
+  Readonly<Record<Keys, IdentifyGuard | TryParse>>
+>
+```
+
+Guards run in definition order. First `true` wins. Keys are typed against the schema map, so typos are compile-time errors. You don't have to cover every schema.
+
+### IdentifyGuard
+
+```ts
+type IdentifyGuard = (value: unknown) => boolean
+```
+
+A sync predicate that tests whether an unknown value belongs to a particular schema. Used as values in an `IdentifyGuardMap`, or built via the [`match`](#match) helper.
+
+### IdentifyFn
+
+A single discriminator function that returns a schema key or `null`.
+
+```ts
+type IdentifyFn = (value: unknown) => string | null
+```
+
+Returns `string | null` (not narrowed to `Keys`) so helpers like [`byField`](#byfield) work without knowing the schema map at definition time. Returned keys are verified against registered schemas at runtime.
+
+## Result types
+
+### IdentifyResult
+
+Returned by [`registry.identify()`](/docs/api/registry#identify).
+
+```ts
+type IdentifyResult<Keys extends string = string> = Result<
+  Keys,
+  readonly DobaIssue[],
+  IdentifyMeta<Keys>
+>
+```
+
+### IdentifyMeta
+
+```ts
+type IdentifyMeta<Keys extends string = string> = {
+  readonly schema: Keys
+}
+```
+
+On success:
+
+| Field         | Type   | Description              |
+| ------------- | ------ | ------------------------ |
+| `value`       | `Keys` | The matched schema key.  |
+| `meta.schema` | `Keys` | Same as `value`.         |
+
+On failure:
+
+| Field              | Type                                          | Description                                         |
+| ------------------ | --------------------------------------------- | --------------------------------------------------- |
+| `issues[].code`    | `'identify_failed' \| 'identify_ambiguous'`   | What went wrong.                                    |
+| `issues[].message` | `string`                                      | Human-readable description.                         |
+| `issues[].meta`    | `Record<string, unknown>`                     | For `identify_ambiguous`: `{ matches: string[] }`.  |
+
+### IdentifyTransformResult
+
+Returned by [`registry.identifyAndTransform()`](/docs/api/registry#identifyandtransform). Same shape as [`TransformResult`](/docs/api/registry#transformresult) but `meta` includes `from`.
+
+```ts
+type IdentifyTransformResult<T, Keys extends string = string> = Result<
+  T,
+  readonly DobaIssue[],
+  IdentifyTransformMeta<Keys>
+>
+```
+
+### IdentifyTransformMeta
+
+```ts
+type IdentifyTransformMeta<Keys extends string = string> = TransformMeta<Keys> & {
+  readonly from: Keys
+}
+```
+
+On success:
+
+| Field           | Type                     | Description                                                       |
+| --------------- | ------------------------ | ----------------------------------------------------------------- |
+| `value`         | `T`                      | The transformed value, typed to the target schema output.         |
+| `meta.from`     | `Keys`                   | The detected source schema.                                       |
+| `meta.path`     | `readonly Keys[]`        | Ordered schema keys traversed, e.g. `['v1', 'v2', 'v3']`.        |
+| `meta.steps`    | `readonly StepInfo[]`    | Per-step metadata for each migration executed.                    |
+| `meta.warnings` | `readonly WarningInfo[]` | Warnings from `ctx.warn()` and deprecated migrations.             |
+| `meta.defaults` | `readonly DefaultedInfo[]` | Fields filled with default values during migration.             |
+
+## Registry methods
+
+### identify()
+
+```ts
+registry.identify(value: unknown): Promise<IdentifyResult<Keys>>
+```
+
+Detects which schema an unknown value belongs to. Runs sync guards first (in definition order, first `true` wins), then tries `tryParse` schemas in parallel if no sync guard matched.
+
+| Outcome | Issue code |
+| --- | --- |
+| No guard matched, no tryParse validated | `identify_failed` |
+| Multiple tryParse schemas validated | `identify_ambiguous` |
+
+```ts
+const result = await registry.identify(unknownData)
+
+if (result.ok) {
+  console.log(result.value)       // "database"
+  console.log(result.meta.schema) // "database"
+} else {
+  console.log(result.issues[0].code) // "identify_failed" or "identify_ambiguous"
+}
+```
+
+### identifyAndTransform()
+
+```ts
+registry.identifyAndTransform<To extends Keys>(
+  value: unknown,
+  to: To,
+  options?: TransformOptions<Keys>,
+): Promise<IdentifyTransformResult<InferOutput<Schemas[To]>, Keys>>
+```
+
+Identifies the source schema, then transforms to the target. Combines `identify()` and `transform()` in one call. Accepts all [`TransformOptions`](/docs/api/registry#transformoptions) (`validate`, `path`, `pathStrategy`, `validatePath`).
+
+```ts
+const result = await registry.identifyAndTransform(unknownData, 'frontend')
+
+if (result.ok) {
+  result.value      // typed as FrontendUser
+  result.meta.from  // "database" (detected source)
+  result.meta.path  // ["database", "frontend"]
+  result.meta.steps // per-step metadata
+}
+```
+
+## Helpers
+
+### match
+
+Entry point for building chainable identify guards. Returns a [`Matcher`](#matcher).
+
+```ts
+const match: Matcher
+```
+
+```ts
+import { match } from 'dobajs'
+
+match.field('passwordHash')                    // field exists
+match.field('version', 2)                      // field === 2
+match.fields('id', 'email')                    // both fields exist
+match.type('string')                           // typeof check
+match.test((v) => Array.isArray(v))            // custom predicate
+match.field('passwordHash').field('email')     // AND: both must exist
+```
+
+### Matcher
+
+Each method returns a new `Matcher` that is both chainable (add more conditions) and callable as `(value: unknown) => boolean`. Chaining ANDs conditions together.
+
+```ts
+interface Matcher {
+  (value: unknown): boolean
+
+  field(name: string, expected?: unknown): Matcher
+  fields(...names: string[]): Matcher
+  type(type: string): Matcher
+  test(fn: (value: unknown) => boolean): Matcher
+}
+```
+
+| Method              | What it checks                                                          |
+| ------------------- | ----------------------------------------------------------------------- |
+| `.field(name)`      | Field exists on the value (`name in value`).                            |
+| `.field(name, val)` | Field exists and `value[name] === val` (strict equality).               |
+| `.fields(...names)` | All named fields exist on the value.                                    |
+| `.type(t)`          | `typeof value === t`. Note: `typeof null === 'object'` in JS.          |
+| `.test(fn)`         | Custom predicate returns `true`.                                        |
+
+### tryParse
+
+```ts
+const tryParse: unique symbol
+```
+
+A sentinel symbol. When used as a guard value in the identify map, doba validates the value against that schema's `~standard.validate()` instead of running a sync predicate.
+
+Sync guards always run before `tryParse`. Multiple `tryParse` schemas are validated in parallel. If more than one validates, the result is `identify_ambiguous`.
+
+```ts
+import { tryParse } from 'dobajs'
+
+identify: {
+  database: match.field('passwordHash'),  // sync guard (runs first)
+  frontend: tryParse,                      // schema validation fallback
+}
+```
+
+### byField()
+
+```ts
+function byField(
+  field: string,
+  options?: ByFieldOptions,
+): (value: unknown) => string | null
+
+type ByFieldOptions =
+  | { prefix?: string; suffix?: string; map?: never }
+  | { map: Record<string, string>; prefix?: never; suffix?: never }
+```
+
+Creates a discriminator function that reads a field from the value and derives a schema key. Returns `null` if the value isn't an object, the field is missing, or (with `map`) no mapping exists. Field values are converted via `String()`, so numeric values like `{ version: 2 }` become `"2"`.
+
+| Option   | Effect                                              | Example                                              |
+| -------- | --------------------------------------------------- | ---------------------------------------------------- |
+| *(none)* | `String(value[field])` used as key directly         | `{ version: "v1" }` -> `"v1"`                        |
+| `prefix` | Prepended to the stringified field value            | `{ v: "1" }` + prefix `"v"` -> `"v1"`                |
+| `suffix` | Appended to the stringified field value             | `{ kind: "user" }` + suffix `"_v2"` -> `"user_v2"`   |
+| `map`    | Explicit lookup (mutually exclusive with prefix/suffix) | `{ type: "UserDB" }` + map `{ UserDB: "database" }` -> `"database"` |
+
+### firstMatch()
+
+```ts
+function firstMatch(
+  ...fns: readonly ((value: unknown) => string | null)[],
+): (value: unknown) => string | null
+```
+
+Composes multiple discriminator functions. Tries each in order, returns the first non-null result. Returns `null` if all functions return `null`.
+
+```ts
+import { byField, firstMatch } from 'dobajs'
+
+identify: firstMatch(
+  byField('_tag'),
+  byField('version', { prefix: 'v' }),
+  (v) => typeof v === 'string' ? 'name' : null,
+)
+```
+
+## Issue codes
+
+| Code                 | When                                                      | Extra metadata                                       |
+| -------------------- | --------------------------------------------------------- | ---------------------------------------------------- |
+| `identify_failed`    | No guard matched and no `tryParse` schema validated       |                                                      |
+| `identify_ambiguous` | Multiple `tryParse` schemas validated the same value      | `meta.matches: string[]` listing conflicting schemas |

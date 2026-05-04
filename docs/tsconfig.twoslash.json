@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "baseUrl": ".",
+    "paths": {
+      "dobajs": ["./node_modules/dobajs/dist/index.d.mts"],
+      "dobajs/result": ["./node_modules/dobajs/dist/result.d.mts"]
+    }
+  }
+}

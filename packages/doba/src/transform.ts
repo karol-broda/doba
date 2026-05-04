@@ -10,10 +10,15 @@ import type { WarningInfo, DefaultedInfo } from './context.js'
  */
 export type PathStrategy = 'direct' | 'shortest'
 
+/** narrows `T` by excluding `U`, but falls back to `T` when the result would be `never`. */
+export type NarrowExclude<T extends string, U extends string> = [Exclude<T, U>] extends [never]
+  ? T
+  : Exclude<T, U>
+
 /** metadata about a single step in a migration path. */
-export type StepInfo<Keys extends string = string> = {
-  readonly from: Keys
-  readonly to: Keys
+export type StepInfo<FromKey extends string = string, ToKey extends string = FromKey> = {
+  readonly from: FromKey
+  readonly to: ToKey
   /** label from {@link MigrationMetadata}, if provided. */
   readonly label?: string | undefined
   /** present when the step uses a deprecated migration. */
@@ -21,23 +26,28 @@ export type StepInfo<Keys extends string = string> = {
 }
 
 /** metadata attached to a successful transform, describing the path taken and any side effects. */
-export type TransformMeta<Keys extends string = string> = {
+export type TransformMeta<
+  Keys extends string = string,
+  From extends string = Keys,
+  To extends string = Keys,
+> = {
   /** ordered list of schema keys traversed, e.g. `['v1', 'v2', 'v3']`. */
   readonly path: readonly Keys[]
   /** per-step metadata for each migration that was executed. */
-  readonly steps: readonly StepInfo<Keys>[]
+  readonly steps: readonly StepInfo<NarrowExclude<Keys, To>, NarrowExclude<Keys, From>>[]
   /** warnings emitted by migration functions or from deprecated steps. */
-  readonly warnings: readonly WarningInfo<Keys>[]
+  readonly warnings: readonly WarningInfo<NarrowExclude<Keys, To>, NarrowExclude<Keys, From>>[]
   /** fields that were filled with default values during migration. */
-  readonly defaults: readonly DefaultedInfo<Keys>[]
+  readonly defaults: readonly DefaultedInfo<NarrowExclude<Keys, To>, NarrowExclude<Keys, From>>[]
 }
 
 /** result of {@link Registry.transform}, carrying the transformed value or {@link DobaIssue}s. */
-export type TransformResult<T, Keys extends string = string> = Result<
+export type TransformResult<
   T,
-  readonly DobaIssue[],
-  TransformMeta<Keys>
->
+  Keys extends string = string,
+  From extends string = Keys,
+  To extends string = Keys,
+> = Result<T, readonly DobaIssue[], TransformMeta<Keys, From, To>>
 
 /** metadata attached to a successful validation, recording which schema was used. */
 export type ValidateMeta<Key extends string = string> = {

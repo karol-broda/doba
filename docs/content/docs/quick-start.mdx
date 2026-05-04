@@ -100,7 +100,51 @@ This creates the following migration graph:
 
 ## Transform data
 
-```ts title="transform.ts"
+```ts twoslash title="transform.ts"
+import { createRegistry } from 'dobajs'
+import { z } from 'zod'
+
+const db = z.object({
+  id: z.string(),
+  email: z.string(),
+  passwordHash: z.string(),
+  createdAt: z.string(),
+  role: z.enum(['admin', 'user']),
+})
+const fe = z.object({
+  id: z.string(),
+  email: z.string(),
+  createdAt: z.string(),
+  role: z.enum(['admin', 'user']),
+})
+const ai = z.object({
+  id: z.string(),
+  email: z.string(),
+  isAdmin: z.boolean(),
+})
+
+const userRegistry = createRegistry({
+  schemas: { database: db, frontend: fe, ai },
+  migrations: {
+    'database->frontend': (user) => ({
+      id: user.id,
+      email: user.email,
+      createdAt: user.createdAt,
+      role: user.role,
+    }),
+    'database->ai': (user) => ({
+      id: user.id,
+      email: user.email,
+      isAdmin: user.role === 'admin',
+    }),
+    'frontend->ai': (user) => ({
+      id: user.id,
+      email: user.email,
+      isAdmin: user.role === 'admin',
+    }),
+  },
+})
+// ---cut---
 const dbUser = {
   id: 'user-123',
   email: 'alice@example.com',
@@ -112,11 +156,10 @@ const dbUser = {
 const result = await userRegistry.transform(dbUser, 'database', 'frontend')
 
 if (result.ok) {
-  console.log(result.value)
-  // { id: "user-123", email: "alice@example.com", createdAt: "...", role: "admin" }
-
-  console.log(result.meta.path)
-  // ["database", "frontend"]
+  result.value
+//       ^?
+  result.meta.path
+//            ^?
 }
 ```
 
@@ -174,6 +217,11 @@ if (!result.ok) {
     title="Migration context"
     description="Track warnings, defaults, and audit trails through your migrations."
     href="/docs/context"
+  />
+  <Feature
+    title="Schema identification"
+    description="Detect which schema unknown data belongs to and transform it in one call."
+    href="/docs/identify"
   />
   <Feature
     title="Migration helpers"
