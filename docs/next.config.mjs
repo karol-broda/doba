@@ -12,6 +12,12 @@ const config = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  async rewrites() {
+    return ['.md', '.mdx'].map((ext) => ({
+      source: `/docs/:path*${ext}`,
+      destination: '/llms.md/docs/:path*',
+    }))
+  },
 }
 
 const withMDX = createMDX()
