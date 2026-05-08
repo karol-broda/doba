@@ -28,12 +28,10 @@ export function findPathBFS<K extends string>(graph: Graph<K>, from: K, to: K): 
   const prev = new Map<K, K>()
   const visited = new Set<K>([from])
   const queue: K[] = [from]
+  let head = 0
 
-  while (queue.length > 0) {
-    const current = queue.shift()
-    if (current === undefined) {
-      break
-    }
+  while (head < queue.length) {
+    const current = queue[head++] as K
 
     const edges = graph.get(current)
     if (edges === undefined) {
@@ -60,11 +58,9 @@ export function findPathBFS<K extends string>(graph: Graph<K>, from: K, to: K): 
 export function reachableFrom<K extends string>(graph: Graph<K>, start: K): ReadonlySet<K> {
   const visited = new Set<K>()
   const queue: K[] = [start]
-  while (queue.length > 0) {
-    const current = queue.shift()
-    if (current === undefined) {
-      break
-    }
+  let head = 0
+  while (head < queue.length) {
+    const current = queue[head++] as K
     const edges = graph.get(current)
     if (edges === undefined) {
       continue
