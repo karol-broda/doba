@@ -3,6 +3,7 @@ import { RootProvider } from 'fumadocs-ui/provider/next'
 import { Space_Grotesk, Instrument_Serif } from 'next/font/google'
 import type { ReactNode } from 'react'
 import type { Metadata } from 'next'
+import Script from 'next/script'
 import './global.css'
 
 const body = Space_Grotesk({
@@ -112,6 +113,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
       </head>
       <body className="font-[family-name:var(--font-body)] antialiased">
+        <Script
+          src="https://cloud.umami.is/script.js"
+          data-website-id="490cbc26-d475-4747-8c8d-ab407ca63aa4"
+          strategy="afterInteractive"
+        />
         <RootProvider>{children}</RootProvider>
       </body>
     </html>
