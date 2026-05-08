@@ -2,10 +2,11 @@ import type { TransformContext } from './context.js'
 
 // ---- internal ----
 
-type InternalHelper = (
-  value: Record<string, unknown>,
-  ctx: TransformContext,
-) => Record<string, unknown>
+type PipeOp =
+  | { type: 'rename'; from: string; to: string }
+  | { type: 'add'; name: string; defaultValue: unknown }
+  | { type: 'drop'; names: string[] }
+  | { type: 'map'; name: string; fn: (value: unknown) => unknown }
 
 /** flattens intersections for readable IDE tooltips. */
 // eslint-disable-next-line typescript-eslint/ban-types -- intentional empty intersection for type simplification
@@ -96,66 +97,60 @@ export interface PipeBuilder<In, Current, Target = void> {
   ): (value: In, ctx: TransformContext) => Target
 }
 
-// ---- internal helper implementations ----
-
-function renameImpl(from: string, to: string): InternalHelper {
-  return (value) => {
-    if (!(from in value)) {
-      return value
-    }
-    const { [from]: moved, ...rest } = value
-    return { ...rest, [to]: moved }
-  }
-}
-
-function addImpl(name: string, defaultValue: unknown): InternalHelper {
-  return (value, ctx) => {
-    if (name in value) {
-      return value
-    }
-    const resolved = typeof defaultValue === 'function' ? defaultValue() : defaultValue
-    ctx.defaulted([name], `added with default`)
-    return { ...value, [name]: resolved }
-  }
-}
-
-function dropImpl(...names: string[]): InternalHelper {
-  return (value) => {
-    const result = { ...value }
-    for (const name of names) {
-      delete result[name]
-    }
-    return result
-  }
-}
-
-function mapImpl(name: string, fn: (value: unknown) => unknown): InternalHelper {
-  return (value) => {
-    if (!(name in value)) {
-      return value
-    }
-    return { ...value, [name]: fn(value[name]) }
-  }
-}
-
 // ---- builder factory ----
 
-function createBuilder<In, Current>(steps: InternalHelper[]): PipeBuilder<In, Current> {
-  const execute = function (this: void, value: Record<string, unknown>, ctx: TransformContext) {
-    let current = value
-    for (const step of steps) {
-      current = step(current, ctx)
+function executePipe(
+  ops: readonly PipeOp[],
+  value: Record<string, unknown>,
+  ctx: TransformContext,
+): Record<string, unknown> {
+  if (ops.length === 0) {
+    return value
+  }
+  const result: Record<string, unknown> = { ...value }
+  for (const op of ops) {
+    switch (op.type) {
+      case 'rename':
+        if (op.from in result) {
+          result[op.to] = result[op.from]
+          delete result[op.from]
+        }
+        break
+      case 'add':
+        if (!(op.name in result)) {
+          result[op.name] =
+            typeof op.defaultValue === 'function' ? op.defaultValue() : op.defaultValue
+          ctx.defaulted([op.name], `added with default`)
+        }
+        break
+      case 'drop':
+        for (const name of op.names) {
+          delete result[name]
+        }
+        break
+      case 'map':
+        if (op.name in result) {
+          result[op.name] = op.fn(result[op.name])
+        }
+        break
     }
-    return current
+  }
+  return result
+}
+
+function createBuilder<In, Current>(ops: PipeOp[]): PipeBuilder<In, Current> {
+  const execute = function (this: void, value: Record<string, unknown>, ctx: TransformContext) {
+    return executePipe(ops, value, ctx)
   }
 
   return Object.assign(execute, {
-    rename: (from: string, to: string) => createBuilder([...steps, renameImpl(from, to)]),
+    rename: (from: string, to: string) =>
+      createBuilder([...ops, { type: 'rename', from, to }]),
     add: (name: string, defaultValue: unknown) =>
-      createBuilder([...steps, addImpl(name, defaultValue)]),
-    drop: (...names: string[]) => createBuilder([...steps, dropImpl(...names)]),
-    map: (name: string, mapFn: (v: unknown) => unknown) =>
-      createBuilder([...steps, mapImpl(name, mapFn)]),
+      createBuilder([...ops, { type: 'add', name, defaultValue }]),
+    drop: (...names: string[]) => createBuilder([...ops, { type: 'drop', names }]),
+    map: (name: string, fn: (v: unknown) => unknown) =>
+      createBuilder([...ops, { type: 'map', name, fn }]),
     into: () => execute,
   }) as unknown as PipeBuilder<In, Current>
 }
