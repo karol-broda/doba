@@ -507,10 +507,10 @@ export function createRegistry<Schemas extends SchemaMap>(
     }
 
     return ok(current, {
-      path: [...path],
+      path,
       steps,
-      warnings: [...state.warnings],
-      defaults: [...state.defaults],
+      warnings: state.warnings,
+      defaults: state.defaults,
     } satisfies TransformMeta<Keys>)
   }
 
@@ -622,10 +622,10 @@ export function createRegistry<Schemas extends SchemaMap>(
     }
 
     const r = ok(current, {
-      path: [...path],
+      path,
       steps,
-      warnings: [...state.warnings],
-      defaults: [...state.defaults],
+      warnings: state.warnings,
+      defaults: state.defaults,
     } satisfies TransformMeta<Keys>)
     onTransform?.({ from, to, path, durationMs: performance.now() - startTime, ok: true })
     return r
