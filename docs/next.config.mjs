@@ -13,10 +13,20 @@ const config = {
     ignoreBuildErrors: true,
   },
   async rewrites() {
-    return ['.md', '.mdx'].map((ext) => ({
-      source: `/docs/:path*${ext}`,
-      destination: '/llms.md/docs/:path*',
-    }))
+    return [
+      ...['.md', '.mdx'].map((ext) => ({
+        source: `/docs/:path*${ext}`,
+        destination: '/llms.md/docs/:path*',
+      })),
+      {
+        source: '/a/script.js',
+        destination: 'https://cloud.umami.is/script.js',
+      },
+      {
+        source: '/api/send',
+        destination: 'https://cloud.umami.is/api/send',
+      },
+    ]
   },
 }
 
