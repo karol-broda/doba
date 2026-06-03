@@ -144,8 +144,7 @@ function createBuilder<In, Current>(ops: PipeOp[]): PipeBuilder<In, Current> {
   }
 
   return Object.assign(execute, {
-    rename: (from: string, to: string) =>
-      createBuilder([...ops, { type: 'rename', from, to }]),
+    rename: (from: string, to: string) => createBuilder([...ops, { type: 'rename', from, to }]),
     add: (name: string, defaultValue: unknown) =>
       createBuilder([...ops, { type: 'add', name, defaultValue }]),
     drop: (...names: string[]) => createBuilder([...ops, { type: 'drop', names }]),

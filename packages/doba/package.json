@@ -33,11 +33,11 @@
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs"
     },
+    "./package.json": "./package.json",
     "./result": {
       "types": "./dist/result.d.mts",
       "import": "./dist/result.mjs"
-    },
-    "./package.json": "./package.json"
+    }
   },
   "scripts": {
     "build": "tsdown",
