@@ -10,7 +10,7 @@ export function Install() {
     <section className={section({ spacing: 'sm' })}>
       <div className="mx-auto max-w-xs px-6">
         <motion.div {...fadeUp()}>
-          <DynamicCodeBlock lang="bash" code="bun add doba" />
+          <DynamicCodeBlock lang="bash" code="bun add dobajs" />
         </motion.div>
       </div>
     </section>
