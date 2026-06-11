@@ -71,21 +71,25 @@ describe('resolveMigrations', () => {
     expect(resolved.size).toBe(0)
   })
 
-  it('skips object missing migrate field', () => {
-    const { migrations: resolved } = resolveMigrations({
+  it('skips object missing migrate field (with warning)', () => {
+    const { migrations: resolved, warnings } = resolveMigrations({
       'a->b': { notMigrate: (v: unknown) => v },
     })
     expect(resolved.size).toBe(0)
+    // T5: skipped defs now emit a warning instead of failing silently.
+    expect(warnings.some((w) => w.message.includes('a->b'))).toBe(true)
   })
 
-  it('skips reversible missing forward/backward', () => {
-    const { migrations: resolved } = resolveMigrations({
+  it('skips reversible missing forward/backward (with warning)', () => {
+    const { migrations: resolved, warnings } = resolveMigrations({
       'a<->b': { forward: (v: unknown) => v },
       'c<->d': { backward: (v: unknown) => v },
       'e<->f': { migrate: (v: unknown) => v },
       'g<->h': 'not an object',
     })
     expect(resolved.size).toBe(0)
+    // T5: all four malformed reversible defs warn.
+    expect(warnings.length).toBeGreaterThanOrEqual(3)
   })
 
   it('one-way overrides reversible forward with warning', () => {
