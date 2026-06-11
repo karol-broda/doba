@@ -71,7 +71,9 @@ export function createTransformContext<Keys extends string, From extends Keys, T
     },
     defaulted(path: readonly PropertyKey[], message: string): void {
       state.defaults.push({ path: [...path], message, from, to })
-      const pathStr = path.length > 0 ? path.join('.') : '(root)'
+      // Stringify each segment safely: path.join('.') throws on Symbol entries
+      // because String(Symbol) throws a TypeError.
+      const pathStr = path.length > 0 ? path.map((segment) => String(segment)).join('.') : '(root)'
       onWarning?.(`defaulted ${pathStr}: ${message}`, from, to)
     },
   }

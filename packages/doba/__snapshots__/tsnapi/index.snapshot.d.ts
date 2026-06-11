@@ -60,6 +60,8 @@ export type IdentifyTransformMeta<Keys extends string = string> = TransformMeta<
   readonly from: Keys;
 };
 export type IdentifyTransformResult<T, Keys extends string = string> = Result<T, readonly DobaIssue[], IdentifyTransformMeta<Keys>>;
+export type MermaidConfig = Readonly<Record<string, MermaidConfigValue>>;
+export type MermaidConfigValue = unknown;
 export type MigrationDef<FromValue, ToValue, Keys extends string = string, FromKey extends Keys = Keys, ToKey extends Keys = Keys> = MigrationFn<FromValue, ToValue, Keys, FromKey, ToKey> | (MigrationMetadata & {
   readonly migrate: MigrationFn<FromValue, ToValue, Keys, FromKey, ToKey>;
 }) | PipeMigrationDef<FromValue, ToValue, Keys, FromKey, ToKey>;
@@ -151,11 +153,44 @@ export type ValidateMeta<Key extends string = string> = {
   readonly schema: Key;
 };
 export type ValidateResult<T, Key extends string = string> = Result<T, readonly DobaIssue[], ValidateMeta<Key>>;
+export type VisualizeCommonOptions = {
+  readonly costs?: boolean | undefined;
+};
+export type VisualizeDirection = "LR" | "TB";
+export type VisualizeDotOptions = VisualizeCommonOptions & {
+  readonly format: "dot";
+  readonly direction?: VisualizeDirection | undefined;
+  readonly graphName?: string | undefined;
+};
+export type VisualizeFormat = "text" | "mermaid" | "json" | "dot";
+export type VisualizeInput = VisualizeFormat | VisualizeOptions;
+export type VisualizeJsonOptions = {
+  readonly format: "json";
+  readonly space?: number | undefined;
+};
+export type VisualizeMermaidOptions = VisualizeCommonOptions & {
+  readonly format: "mermaid";
+  readonly direction?: VisualizeDirection | undefined;
+  readonly config?: MermaidConfig | undefined;
+};
+export type VisualizeOptions = VisualizeTextOptions | VisualizeMermaidOptions | VisualizeDotOptions | VisualizeJsonOptions;
+export type VisualizeTextOptions = VisualizeCommonOptions & {
+  readonly format?: "text" | undefined;
+  readonly title?: string | undefined;
+};
 export type WarningInfo<FromKey extends string = string, ToKey extends string = FromKey> = {
   readonly message: string;
   readonly from: FromKey;
   readonly to: ToKey;
 };
+// #endregion
+
+// #region Classes
+export declare class MigrationConflictError extends Error {
+  readonly edge: string;
+  readonly sources: readonly [string, string];
+  constructor(_: string, _: readonly [string, string]);
+}
 // #endregion
 
 // #region Functions

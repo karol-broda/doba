@@ -163,6 +163,23 @@ export const PREFERRED_COST = 0
 /** edge cost assigned when a migration is deprecated, making the graph avoid it. */
 export const DEPRECATED_COST = 1000
 
+/**
+ * thrown by {@link resolveMigrations} when two definitions claim the same edge
+ * and neither overrides the other (e.g. two reversible migrations that both
+ * register `a<->b`). surfaced as a typed error so callers building registries
+ * from dynamic config can distinguish it from unrelated failures.
+ */
+export class MigrationConflictError extends Error {
+  readonly edge: string
+  readonly sources: readonly [string, string]
+  constructor(edge: string, sources: readonly [string, string]) {
+    super(`Migration conflict: "${edge}" is defined by both "${sources[0]}" and "${sources[1]}"`)
+    this.name = 'MigrationConflictError'
+    this.edge = edge
+    this.sources = sources
+  }
+}
+
 export type MigrationFunction = (value: unknown, ctx: unknown) => unknown
 export type ResolvedMigration = {
   readonly fn: MigrationFunction
@@ -191,7 +208,7 @@ function extractMetadata(obj: Record<string, unknown>): {
   }
 
   let resolvedCost: number = DEFAULT_COST
-  if (typeof cost === 'number') {
+  if (typeof cost === 'number' && Number.isFinite(cost) && cost >= 0) {
     resolvedCost = cost
   } else if (preferred === true) {
     resolvedCost = PREFERRED_COST
@@ -247,9 +264,7 @@ function registerEdge(
       })
     } else {
       // same kind (two one-ways or two reversibles)
-      throw new Error(
-        `Migration conflict: "${edgeKey}" is defined by both "${existing}" and "${sourceKey}"`,
-      )
+      throw new MigrationConflictError(edgeKey, [existing, sourceKey])
     }
     return
   }
@@ -271,6 +286,15 @@ export function resolveMigrations(migrations: object): ResolveMigrationsResult {
   const sources = new Map<string, string>()
   const warnings: MigrationWarning[] = []
 
+  /**
+   * pushes a "skipped migration" warning. previously these were silent
+   * `continue`s, which let typos like `backwards:` instead of `backward:`
+   * register half a reversible migration with no signal.
+   */
+  const skip = (key: string, from: string, to: string, reason: string): void => {
+    warnings.push({ from, to, message: `skipped migration "${key}": ${reason}` })
+  }
+
   for (const [key, def] of typedEntries(migrations)) {
     if (def === undefined) {
       continue
@@ -278,13 +302,31 @@ export function resolveMigrations(migrations: object): ResolveMigrationsResult {
 
     const reversibleIdx = key.indexOf('<->')
     if (reversibleIdx !== -1) {
-      if (!isObject(def) || !('forward' in def) || !('backward' in def)) {
+      const from = key.slice(0, reversibleIdx)
+      const to = key.slice(reversibleIdx + 3)
+
+      // T2: reject keys whose parsed endpoints themselves contain arrow
+      // tokens -- they would silently mis-parse. e.g. "a<->b<->c" parses as
+      // from="a", to="b<->c", neither of which is what the user intended.
+      if (
+        from.length === 0 ||
+        to.length === 0 ||
+        from.includes('<->') ||
+        to.includes('<->') ||
+        from.includes('->') ||
+        to.includes('->')
+      ) {
+        skip(
+          key,
+          from,
+          to,
+          'malformed key (use exactly one "<->" between two non-empty schema names)',
+        )
         continue
       }
 
-      const from = key.slice(0, reversibleIdx)
-      const to = key.slice(reversibleIdx + 3)
-      if (from.length === 0 || to.length === 0) {
+      if (!isObject(def) || !('forward' in def) || !('backward' in def)) {
+        skip(key, from, to, 'reversible migration must have "forward" and "backward" functions')
         continue
       }
 
@@ -294,6 +336,7 @@ export function resolveMigrations(migrations: object): ResolveMigrationsResult {
       const { forward } = def
       const { backward } = def
       if (typeof forward !== 'function' || typeof backward !== 'function') {
+        skip(key, from, to, '"forward" and "backward" must be functions')
         continue
       }
 
@@ -310,12 +353,23 @@ export function resolveMigrations(migrations: object): ResolveMigrationsResult {
 
     const arrowIdx = key.indexOf('->')
     if (arrowIdx === -1) {
+      skip(key, '', '', 'malformed key (use "from->to" or "from<->to")')
       continue
     }
 
     const from = key.slice(0, arrowIdx)
     const to = key.slice(arrowIdx + 2)
-    if (from.length === 0 || to.length === 0) {
+    // T2: a key like "a->b->c" parses as from="a", to="b->c" -- the trailing
+    // arrow in `to` is almost never intended. reject it explicitly.
+    if (
+      from.length === 0 ||
+      to.length === 0 ||
+      from.includes('->') ||
+      to.includes('->') ||
+      from.includes('<->') ||
+      to.includes('<->')
+    ) {
+      skip(key, from, to, 'malformed key (use exactly one "->" between two non-empty schema names)')
       continue
     }
 
@@ -330,10 +384,12 @@ export function resolveMigrations(migrations: object): ResolveMigrationsResult {
     } else if (isObject(def) && 'pipe' in def) {
       const { pipe: pipeFn } = def
       if (typeof pipeFn !== 'function') {
+        skip(key, from, to, '"pipe" must be a function')
         continue
       }
       const migrationFn = pipeFn(createPipe()) as MigrationFunction
       if (typeof migrationFn !== 'function') {
+        skip(key, from, to, 'pipe callback must return a function')
         continue
       }
       const meta = extractMetadata(def)
@@ -345,6 +401,7 @@ export function resolveMigrations(migrations: object): ResolveMigrationsResult {
     } else if (isObject(def) && 'migrate' in def) {
       const { migrate } = def
       if (typeof migrate !== 'function') {
+        skip(key, from, to, '"migrate" must be a function')
         continue
       }
       const meta = extractMetadata(def)
@@ -353,6 +410,8 @@ export function resolveMigrations(migrations: object): ResolveMigrationsResult {
         fn: migrate as MigrationFunction,
         source: key,
       })
+    } else {
+      skip(key, from, to, 'must be a function, { migrate }, { pipe }, or { forward, backward }')
     }
   }
 
