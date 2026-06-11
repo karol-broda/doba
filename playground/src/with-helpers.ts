@@ -1,7 +1,7 @@
 /* oxlint-disable no-console -- playground demo scripts use console for output */
 /* oxlint-disable prefer-top-level-await -- wrapped in main() for error handling */
 import { z } from 'zod'
-import { createRegistry, pipe } from 'dobajs'
+import { createRegistry } from 'dobajs'
 
 import { log } from './log'
 
@@ -24,22 +24,22 @@ const v3Schema = z.object({
   verified: z.boolean(),
 })
 
-type V1 = z.infer<typeof v1Schema>
-type V2 = z.infer<typeof v2Schema>
-
 const registry = createRegistry({
   schemas: { v1: v1Schema, v2: v2Schema, v3: v3Schema },
 
   migrations: {
     // type-safe builder: field names autocomplete, map callback is typed
-    'v1->v2': pipe<V1>()
-      .rename('userName', 'name')
-      .map('isAdmin', (v) => (v ? 'admin' : 'user'))
-      .rename('isAdmin', 'role')
-      .drop('legacyId')
-      .add('email', () => 'unknown@example.com'),
+    'v1->v2': {
+      pipe: (p) =>
+        p
+          .rename('userName', 'name')
+          .map('isAdmin', (v) => (v ? 'admin' : 'user'))
+          .rename('isAdmin', 'role')
+          .drop('legacyId')
+          .add('email', () => 'unknown@example.com'),
+    },
 
-    'v2->v3': pipe<V2>().add('verified', false),
+    'v2->v3': { pipe: (p) => p.add('verified', false) },
   },
 
   hooks: {
@@ -55,7 +55,9 @@ async function main() {
   console.log()
 
   log('v1 -> v2 using pipe<V1>().rename().map().rename().drop().add()', 'transform')
-  const v2Result = await registry.transform(user, 'v1', 'v2', { validate: 'none' })
+  const v2Result = await registry.transform(user, 'v1', 'v2', {
+    validate: 'none',
+  })
   if (v2Result.ok) {
     log(v2Result.value, 'result')
     log(v2Result.meta.defaults, 'defaults')
@@ -63,7 +65,9 @@ async function main() {
   console.log()
 
   log('v1 -> v3 auto-chaining through v2', 'transform')
-  const v3Result = await registry.transform(user, 'v1', 'v3', { validate: 'none' })
+  const v3Result = await registry.transform(user, 'v1', 'v3', {
+    validate: 'none',
+  })
   if (v3Result.ok) {
     log(v3Result.value, 'result')
     log(v3Result.meta.path, 'path')
