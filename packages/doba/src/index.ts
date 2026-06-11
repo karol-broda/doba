@@ -17,6 +17,8 @@ export type {
   MigrationsFor,
 } from './migration.js'
 
+export { MigrationConflictError } from './migration.js'
+
 export type {
   NarrowExclude,
   PathStrategy,
@@ -44,6 +46,20 @@ export type {
   IdentifyTransformMeta,
   IdentifyTransformResult,
 } from './registry.js'
+
+export type {
+  MermaidConfig,
+  MermaidConfigValue,
+  VisualizeCommonOptions,
+  VisualizeDirection,
+  VisualizeDotOptions,
+  VisualizeFormat,
+  VisualizeInput,
+  VisualizeJsonOptions,
+  VisualizeMermaidOptions,
+  VisualizeOptions,
+  VisualizeTextOptions,
+} from './visualize-entry.js'
 
 export { pipe } from './helpers.js'
 export type { PipeBuilder } from './helpers.js'
