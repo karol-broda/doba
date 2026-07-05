@@ -8,6 +8,26 @@ type PipeOp =
   | { type: 'drop'; names: string[] }
   | { type: 'map'; name: string; fn: (value: unknown) => unknown }
 
+/**
+ * returns a fresh copy of object/array defaults so callers can't mutate one
+ * transform's result and affect the next. factory functions and primitives
+ * are returned as-is.
+ */
+function cloneDefaultValue(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') {
+    return value
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) =>
+      item !== null && typeof item === 'object' ? cloneDefaultValue(item) : item,
+    )
+  }
+  // plain object: shallow-clone is sufficient for top-level isolation; nested
+  // mutation is documented as out-of-scope (matches the shallow spread used
+  // elsewhere in executePipe).
+  return { ...(value as Record<string, unknown>) }
+}
+
 /** flattens intersections for readable IDE tooltips. */
 // eslint-disable-next-line typescript-eslint/ban-types -- intentional empty intersection for type simplification
 type Simplify<T> = { [K in keyof T]: T[K] } & {}
@@ -119,7 +139,9 @@ function executePipe(
       case 'add':
         if (!(op.name in result)) {
           result[op.name] =
-            typeof op.defaultValue === 'function' ? op.defaultValue() : op.defaultValue
+            typeof op.defaultValue === 'function'
+              ? op.defaultValue()
+              : cloneDefaultValue(op.defaultValue)
           ctx.defaulted([op.name], `added with default`)
         }
         break

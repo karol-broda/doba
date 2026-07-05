@@ -541,25 +541,26 @@ describe('match edge cases', () => {
 // ---- byField edge cases ----
 
 describe('byField edge cases', () => {
-  it('numeric field values are stringified', () => {
+  it('numeric field values return null instead of being stringified', () => {
+    // T13: non-string values now return null. callers must coerce explicitly.
     const fn = byField('version')
-    expect(fn({ version: 42 })).toBe('42')
+    expect(fn({ version: 42 })).toBe(null)
   })
 
-  it('boolean field values are stringified', () => {
+  it('boolean field values return null', () => {
     const fn = byField('active')
-    expect(fn({ active: true })).toBe('true')
-    expect(fn({ active: false })).toBe('false')
+    expect(fn({ active: true })).toBe(null)
+    expect(fn({ active: false })).toBe(null)
   })
 
-  it('null field value is stringified', () => {
+  it('null field value returns null', () => {
     const fn = byField('tag')
-    expect(fn({ tag: null })).toBe('null')
+    expect(fn({ tag: null })).toBe(null)
   })
 
-  it('undefined field value is stringified', () => {
+  it('undefined field value returns null', () => {
     const fn = byField('tag')
-    expect(fn({ tag: undefined })).toBe('undefined')
+    expect(fn({ tag: undefined })).toBe(null)
   })
 
   it('empty prefix and suffix strings behave like no options', () => {
@@ -574,14 +575,19 @@ describe('byField edge cases', () => {
     expect(fn({ type: 'c' })).toBe(null)
   })
 
-  it('object field value is stringified via String()', () => {
+  it('object field value returns null instead of [object Object]', () => {
     const fn = byField('data')
-    expect(fn({ data: {} })).toBe('[object Object]')
+    expect(fn({ data: {} })).toBe(null)
   })
 
-  it('numeric field value with prefix', () => {
+  it('numeric field value with prefix returns null', () => {
     const fn = byField('v', { prefix: 'version_' })
-    expect(fn({ v: 3 })).toBe('version_3')
+    expect(fn({ v: 3 })).toBe(null)
+  })
+
+  it('string field values still work with prefix/suffix', () => {
+    const fn = byField('v', { prefix: 'version_' })
+    expect(fn({ v: '3' })).toBe('version_3')
   })
 })
 
@@ -1110,10 +1116,10 @@ describe('firstMatch composition', () => {
   })
 })
 
-// ---- type coercion in byField ----
+// ---- byField rejects non-string field values (T13) ----
 
-describe('type coercion in byField', () => {
-  it('byField where field value is a number gets String()-ed', async () => {
+describe('byField rejects non-string field values', () => {
+  it('byField where field value is a number returns null', async () => {
     type N1 = { version: number; data: string }
     const n1Schema = createMockSchema<N1>((v) => {
       const obj = v as Record<string, unknown>
@@ -1129,25 +1135,25 @@ describe('type coercion in byField', () => {
       identify: byField('version'),
     })
 
+    // T13: numeric field value no longer stringifies to "1"; returns null
+    // because the field value isn't a string. callers must coerce explicitly.
     const result = await registry.identify({ version: 1, data: 'hello' })
-    expect(result.ok).toBe(true)
-    if (result.ok) {
-      expect(result.value).toBe('1')
-    }
+    expect(result.ok).toBe(false)
   })
 
-  it('byField where field value is an object stringifies to [object Object]', () => {
+  it('byField where field value is an object returns null', () => {
     const fn = byField('tag')
-    const result = fn({ tag: { nested: true } })
-    expect(result).toBe('[object Object]')
+    expect(fn({ tag: { nested: true } })).toBe(null)
   })
 
-  it('byField with map still stringifies the field before lookup', () => {
+  it('byField with map rejects non-string field values', () => {
     const fn = byField('version', { map: { '2': 'v2', '3': 'v3' } })
-    // numeric field value gets String()-ed, then looked up in map
-    expect(fn({ version: 2 })).toBe('v2')
-    expect(fn({ version: 3 })).toBe('v3')
+    // non-string values return null before the map is consulted
+    expect(fn({ version: 2 })).toBe(null)
+    expect(fn({ version: 3 })).toBe(null)
     expect(fn({ version: 99 })).toBe(null)
+    // string values still consult the map
+    expect(fn({ version: '2' })).toBe('v2')
   })
 })
 

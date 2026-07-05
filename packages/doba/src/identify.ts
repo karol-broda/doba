@@ -86,6 +86,11 @@ type ByFieldOptions =
 /**
  * creates an identify function that reads a field from the value and maps it to a schema key.
  *
+ * non-string field values (numbers, booleans, null, objects) return `null`
+ * instead of being stringified -- stringifying them would produce plausible-
+ * looking keys like "[object Object]" or "123" that silently fail to match
+ * any schema. coerce explicitly before passing to byField if you need that.
+ *
  * @example
  * ```ts
  * // value.version matches schema key directly
@@ -108,7 +113,10 @@ export function byField(
       if (!isObj(value) || !(field in value)) {
         return null
       }
-      const raw = String(value[field])
+      const raw = value[field]
+      if (typeof raw !== 'string') {
+        return null
+      }
       return mapping[raw] ?? null
     }
   }
@@ -121,7 +129,8 @@ export function byField(
       if (!isObj(value) || !(field in value)) {
         return null
       }
-      return String(value[field])
+      const raw = value[field]
+      return typeof raw === 'string' ? raw : null
     }
   }
 
@@ -129,7 +138,11 @@ export function byField(
     if (!isObj(value) || !(field in value)) {
       return null
     }
-    return `${prefix}${String(value[field])}${suffix}`
+    const raw = value[field]
+    if (typeof raw !== 'string') {
+      return null
+    }
+    return `${prefix}${raw}${suffix}`
   }
 }
 

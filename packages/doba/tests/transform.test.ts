@@ -221,9 +221,23 @@ describe('transform (path options)', () => {
     }
   })
 
-  it('fails at runtime without validatePath for invalid explicit path', async () => {
+  it('fails upfront for invalid explicit path (validatePath defaults to true)', async () => {
     const result = await registry.transform(sampleDatabaseUser, 'database', 'ai', {
       path: ['database', 'legacy', 'ai'],
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      // B2: validatePath now defaults to true, so the path is rejected upfront
+      // with no_path_found instead of failing at runtime with transform_failed.
+      expect(result.issues[0]?.code).toBe('no_path_found')
+      expect(result.issues[0]?.message).toContain('database->legacy')
+    }
+  })
+
+  it('fails at runtime when validatePath is explicitly disabled', async () => {
+    const result = await registry.transform(sampleDatabaseUser, 'database', 'ai', {
+      path: ['database', 'legacy', 'ai'],
+      validatePath: false,
     })
     expect(result.ok).toBe(false)
     if (!result.ok) {

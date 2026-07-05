@@ -29,6 +29,53 @@ import {
   validateWithSchema,
 } from './transform.js'
 import { type IdentifyGuard, type TryParse, tryParse } from './identify.js'
+import { type VisualizeInput, visualizeRegistry } from './visualize-entry.js'
+
+/**
+ * invokes `fn` and returns `undefined` if it throws. observer-pattern hook
+ * invocation: a throwing hook must NOT escape the registry and break the
+ * Result contract. swallowed errors are surfaced via `onSwallow` so callers
+ * (e.g. `debug` mode) can still observe them.
+ */
+function safeCall<T>(
+  fn: (() => T) | undefined,
+  onSwallow?: (error: unknown) => void,
+): T | undefined {
+  if (fn === undefined) {
+    return undefined
+  }
+  try {
+    return fn()
+  } catch (error) {
+    onSwallow?.(error)
+    return undefined
+  }
+}
+
+/** standard swallow sink: only logs when debug mode is on. */
+function debugSwallow(debug: boolean | undefined, hookName: string): (error: unknown) => void {
+  if (!debug) {
+    return () => {}
+  }
+  return (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error)
+    // oxlint-disable-next-line no-console -- debug mode intentionally logs swallowed hook errors
+    console.log(`[doba] ${hookName} hook threw (swallowed): ${message}`)
+  }
+}
+
+/**
+ * thenable detector shared by transform, validate, and identify. `instanceof
+ * Promise` misses values returned by libraries that produce promise-like
+ * objects without using the global Promise constructor.
+ */
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    typeof (value as { then?: unknown }).then === 'function'
+  )
+}
 
 /** information passed to the {@link RegistryHooks.onTransform} hook. */
 export type TransformHookInfo<Keys extends string = string> = {
@@ -187,14 +234,20 @@ type RegistryBase<Schemas extends SchemaMap> = {
   /**
    * returns a diagnostic description of the migration path between two schemas,
    * including costs, labels, deprecation info, and a human-readable summary.
+   *
+   * `options.pathStrategy` overrides the registry-level strategy for this call,
+   * matching the per-call override accepted by {@link Registry.transform}.
    */
   readonly explain: <From extends SchemaKeys<Schemas>, To extends SchemaKeys<Schemas>>(
     from: From,
     to: To,
+    options?: { readonly pathStrategy?: PathStrategy | undefined } | undefined,
   ) => ExplainResult<SchemaKeys<Schemas>, From, To>
 
   /** the schemas this registry was created with. */
   readonly schemas: Schemas
+
+  readonly visualize: (input?: VisualizeInput) => string
 }
 
 /** methods added to the registry when identify is configured. */
@@ -362,6 +415,12 @@ export function createRegistry<Schemas extends SchemaMap>(
   // when no timing hooks are registered, skip all performance.now() calls and object allocations
   const hasTiming = onTransform !== undefined || onStep !== undefined
 
+  // sinks for swallowed hook errors (H1-H5): a throwing hook never escapes the
+  // registry; in debug mode the swallowed error is logged.
+  const swallowWarning = debugSwallow(debug, 'onWarning')
+  const swallowStep = debugSwallow(debug, 'onStep')
+  const swallowTransform = debugSwallow(debug, 'onTransform')
+
   for (const w of resolved.warnings) {
     onWarning?.(w.message, w.from as Keys, w.to as Keys)
   }
@@ -427,18 +486,76 @@ export function createRegistry<Schemas extends SchemaMap>(
     ])
   }
 
-  async function transformCore(
+  /**
+   * optional timing/hook instrumentation. when undefined (the common
+   * no-hooks case), all performance.now() calls and per-step allocations
+   * are skipped, matching the original fast-path behavior.
+   */
+  type Instrumentation = {
+    readonly startTime: number
+    readonly emitStep: (info: {
+      readonly from: Keys
+      readonly to: Keys
+      readonly index: number
+      readonly total: number
+      readonly label: string | undefined
+      readonly durationMs: number
+      readonly ok: boolean
+    }) => void
+    readonly emitTransform: (succeeded: boolean, resolvedPath: readonly Keys[] | null) => void
+  }
+
+  function makeInstrumentation(from: Keys, to: Keys, startTime: number): Instrumentation {
+    return {
+      startTime,
+      emitStep: (info) => safeCall(() => onStep?.(info), swallowStep),
+      emitTransform: (succeeded, resolvedPath) =>
+        safeCall(
+          () =>
+            onTransform?.({
+              from,
+              to,
+              path: resolvedPath,
+              durationMs: performance.now() - startTime,
+              ok: succeeded,
+            }),
+          swallowTransform,
+        ),
+    }
+  }
+
+  /**
+   * single transform implementation. `instrumentation` is undefined when no
+   * timing hooks are registered, in which case all performance.now() calls
+   * and per-step object allocations are skipped (the documented fast path).
+   */
+  async function runTransform(
     value: unknown,
     _from: Keys,
     to: Keys,
     path: readonly Keys[],
     options: TransformOptions<Keys> | undefined,
+    instrumentation: Instrumentation | undefined,
   ): Promise<TransformResult<unknown, Keys>> {
     const state = createTransformState<Keys>()
     const steps: StepInfo<Keys>[] = []
     const validateStrategy = options?.validate ?? 'end'
     const totalSteps = path.length - 1
     let current = value
+
+    // T3: 'each' validates intermediate schemas; the input schema (path[0])
+    // is validated here so a malformed input doesn't pass through unchecked.
+    if (validateStrategy === 'each' && totalSteps > 0) {
+      const inputSchema = schemas[path[0] as Keys]
+      if (inputSchema !== undefined) {
+        const result = await validateWithSchema(inputSchema, current, path[0] as Keys)
+        if (!result.ok) {
+          instrumentation?.emitTransform(false, path)
+          return result
+        }
+        current = result.value
+      }
+    }
 
     for (let i = 0; i < totalSteps; i++) {
       const stepFrom = path[i] as Keys
@@ -447,6 +564,7 @@ export function createRegistry<Schemas extends SchemaMap>(
       const migration = migrations.get(key)
 
       if (migration === undefined) {
+        instrumentation?.emitTransform(false, path)
         return err([createIssue('transform_failed', `missing migration "${key}"`)])
       }
 
@@ -467,17 +585,49 @@ export function createRegistry<Schemas extends SchemaMap>(
           from: stepFrom,
           to: stepTo,
         })
-        onWarning?.(`using deprecated migration "${key}"${reason}`, stepFrom, stepTo)
+        // H5: deprecated-warning invocation must not escape the registry.
+        safeCall(
+          () => onWarning?.(`using deprecated migration "${key}"${reason}`, stepFrom, stepTo),
+          swallowWarning,
+        )
       }
 
-      const ctx = createTransformContext(state, stepFrom, stepTo, onWarning)
+      const ctx = createTransformContext(state, stepFrom, stepTo, (msg, f, t) =>
+        safeCall(() => onWarning?.(msg, f, t), swallowWarning),
+      )
+      const stepStart = instrumentation !== undefined ? performance.now() : 0
 
       try {
         const result = migration.fn(current, ctx)
+        // T11: detect thenables, not just real Promises.
         // oxlint-disable-next-line no-await-in-loop -- migration steps must run sequentially, each depends on the previous result
-        current = result instanceof Promise ? await result : result
+        current = isThenable(result) ? await result : (result as unknown)
+        // H1: onStep invocations must not escape the registry.
+        if (instrumentation !== undefined) {
+          instrumentation.emitStep({
+            from: stepFrom,
+            to: stepTo,
+            index: i,
+            total: totalSteps,
+            label: migration.label,
+            durationMs: performance.now() - stepStart,
+            ok: true,
+          })
+        }
       } catch (error) {
+        if (instrumentation !== undefined) {
+          instrumentation.emitStep({
+            from: stepFrom,
+            to: stepTo,
+            index: i,
+            total: totalSteps,
+            label: migration.label,
+            durationMs: performance.now() - stepStart,
+            ok: false,
+          })
+        }
         const message = error instanceof Error ? error.message : String(error)
+        instrumentation?.emitTransform(false, path)
         return err([createIssue('transform_failed', `migration "${key}" threw: ${message}`)])
       }
 
@@ -487,6 +637,7 @@ export function createRegistry<Schemas extends SchemaMap>(
           // oxlint-disable-next-line no-await-in-loop -- intermediate validation must happen before the next migration step
           const result = await validateWithSchema(intermediateSchema, current, stepTo)
           if (!result.ok) {
+            instrumentation?.emitTransform(false, path)
             return result
           }
           current = result.value
@@ -497,125 +648,12 @@ export function createRegistry<Schemas extends SchemaMap>(
     if (validateStrategy !== 'none') {
       const finalSchema = schemas[to]
       if (finalSchema === undefined) {
+        instrumentation?.emitTransform(false, path)
         return err([createIssue('unknown_schema', `schema "${to}" not found`)])
       }
       const result = await validateWithSchema(finalSchema, current, to)
       if (!result.ok) {
-        return result
-      }
-      current = result.value
-    }
-
-    return ok(current, {
-      path,
-      steps,
-      warnings: state.warnings,
-      defaults: state.defaults,
-    } satisfies TransformMeta<Keys>)
-  }
-
-  async function transformInstrumented(
-    value: unknown,
-    from: Keys,
-    to: Keys,
-    path: readonly Keys[],
-    options: TransformOptions<Keys> | undefined,
-    startTime: number,
-  ): Promise<TransformResult<unknown, Keys>> {
-    const state = createTransformState<Keys>()
-    const steps: StepInfo<Keys>[] = []
-    const validateStrategy = options?.validate ?? 'end'
-    const totalSteps = path.length - 1
-    let current = value
-
-    for (let i = 0; i < totalSteps; i++) {
-      const stepFrom = path[i] as Keys
-      const stepTo = path[i + 1] as Keys
-      const key = `${stepFrom}->${stepTo}`
-      const migration = migrations.get(key)
-
-      if (migration === undefined) {
-        const r = err([createIssue('transform_failed', `missing migration "${key}"`)])
-        onTransform?.({ from, to, path, durationMs: performance.now() - startTime, ok: false })
-        return r
-      }
-
-      steps.push({
-        from: stepFrom,
-        to: stepTo,
-        label: migration.label,
-        deprecated: migration.deprecated === false ? undefined : migration.deprecated,
-      })
-
-      if (migration.deprecated !== false) {
-        let reason = ''
-        if (typeof migration.deprecated === 'string' && migration.deprecated !== 'deprecated') {
-          reason = `: ${migration.deprecated}`
-        }
-        state.warnings.push({
-          message: `using deprecated migration "${key}"${reason}`,
-          from: stepFrom,
-          to: stepTo,
-        })
-        onWarning?.(`using deprecated migration "${key}"${reason}`, stepFrom, stepTo)
-      }
-
-      const ctx = createTransformContext(state, stepFrom, stepTo, onWarning)
-      const stepStart = performance.now()
-
-      try {
-        const result = migration.fn(current, ctx)
-        // oxlint-disable-next-line no-await-in-loop -- migration steps must run sequentially, each depends on the previous result
-        current = result instanceof Promise ? await result : result
-        onStep?.({
-          from: stepFrom,
-          to: stepTo,
-          index: i,
-          total: totalSteps,
-          label: migration.label,
-          durationMs: performance.now() - stepStart,
-          ok: true,
-        })
-      } catch (error) {
-        onStep?.({
-          from: stepFrom,
-          to: stepTo,
-          index: i,
-          total: totalSteps,
-          label: migration.label,
-          durationMs: performance.now() - stepStart,
-          ok: false,
-        })
-        const message = error instanceof Error ? error.message : String(error)
-        const r = err([createIssue('transform_failed', `migration "${key}" threw: ${message}`)])
-        onTransform?.({ from, to, path, durationMs: performance.now() - startTime, ok: false })
-        return r
-      }
-
-      if (validateStrategy === 'each' && i < totalSteps - 1) {
-        const intermediateSchema = schemas[stepTo]
-        if (intermediateSchema !== undefined) {
-          // oxlint-disable-next-line no-await-in-loop -- intermediate validation must happen before the next migration step
-          const result = await validateWithSchema(intermediateSchema, current, stepTo)
-          if (!result.ok) {
-            onTransform?.({ from, to, path, durationMs: performance.now() - startTime, ok: false })
-            return result
-          }
-          current = result.value
-        }
-      }
-    }
-
-    if (validateStrategy !== 'none') {
-      const finalSchema = schemas[to]
-      if (finalSchema === undefined) {
-        const r = err([createIssue('unknown_schema', `schema "${to}" not found`)])
-        onTransform?.({ from, to, path, durationMs: performance.now() - startTime, ok: false })
-        return r
-      }
-      const result = await validateWithSchema(finalSchema, current, to)
-      if (!result.ok) {
-        onTransform?.({ from, to, path, durationMs: performance.now() - startTime, ok: false })
+        instrumentation?.emitTransform(false, path)
         return result
       }
       current = result.value
@@ -627,7 +665,7 @@ export function createRegistry<Schemas extends SchemaMap>(
       warnings: state.warnings,
       defaults: state.defaults,
     } satisfies TransformMeta<Keys>)
-    onTransform?.({ from, to, path, durationMs: performance.now() - startTime, ok: true })
+    instrumentation?.emitTransform(true, path)
     return r
   }
 
@@ -638,13 +676,18 @@ export function createRegistry<Schemas extends SchemaMap>(
     startTime: number,
     success: boolean,
   ): void {
-    onTransform?.({
-      from,
-      to,
-      path: resolvedPath,
-      durationMs: performance.now() - startTime,
-      ok: success,
-    })
+    // H2: onTransform must never escape the registry, even if a user hook throws.
+    safeCall(
+      () =>
+        onTransform?.({
+          from,
+          to,
+          path: resolvedPath,
+          durationMs: performance.now() - startTime,
+          ok: success,
+        }),
+      swallowTransform,
+    )
   }
 
   async function transform(
@@ -670,6 +713,46 @@ export function createRegistry<Schemas extends SchemaMap>(
       return r
     }
 
+    // B1: explicit path must be honored even when from === to. Previously the
+    // from===to short-circuit ran before the explicit-path branch, silently
+    // discarding the user-provided path.
+    if (options?.path !== undefined && options.path.length >= 2) {
+      const explicitPath = options.path
+      if (explicitPath[0] !== from || explicitPath.at(-1) !== to) {
+        const r = err([
+          createIssue('invalid_input', `path must start with "${from}" and end with "${to}"`),
+        ])
+        if (hasTiming) {
+          emitTransform(from, to, null, startTime, false)
+        }
+        return r
+      }
+
+      // B2: validatePath defaults to true so invalid explicit paths fail
+      // upfront with no_path_found rather than at runtime with transform_failed.
+      if (options.validatePath !== false) {
+        const missing = validatePathMigrations(explicitPath)
+        if (missing !== null) {
+          const r = err([
+            createIssue('no_path_found', `forced path is invalid: missing migration "${missing}"`),
+          ])
+          if (hasTiming) {
+            emitTransform(from, to, null, startTime, false)
+          }
+          return r
+        }
+      }
+
+      return runTransform(
+        value,
+        from,
+        to,
+        explicitPath,
+        options,
+        hasTiming ? makeInstrumentation(from, to, startTime) : undefined,
+      )
+    }
+
     if (from === to) {
       const validateStrategy = options?.validate ?? 'end'
       if (validateStrategy !== 'none') {
@@ -691,57 +774,40 @@ export function createRegistry<Schemas extends SchemaMap>(
         if (hasTiming) {
           emitTransform(from, to, [from], startTime, true)
         }
+        // B5: return the validated value by reference; the schema is expected
+        // to return a normalized value, so identity aliasing is acceptable here.
         return ok(result.value, emptyMeta(from))
       }
       if (hasTiming) {
         emitTransform(from, to, [from], startTime, true)
       }
-      return ok(value, emptyMeta(from))
+      // B5: with validate:'none' we shallow-copy so a downstream mutation
+      // can't leak back into the caller's input.
+      return ok(
+        value === null || typeof value !== 'object' ? value : { ...(value as object) },
+        emptyMeta(from),
+      )
     }
 
     const effectiveStrategy = options?.pathStrategy ?? pathStrategy
-    let path: readonly Keys[] = []
-
-    if (options?.path !== undefined && options.path.length >= 2) {
-      ;({ path } = options)
-
-      if (path[0] !== from || path.at(-1) !== to) {
-        const r = err([
-          createIssue('invalid_input', `path must start with "${from}" and end with "${to}"`),
-        ])
-        if (hasTiming) {
-          emitTransform(from, to, null, startTime, false)
-        }
-        return r
+    const found = resolvePath(from, to, effectiveStrategy)
+    if (found === null || found.length < 2) {
+      const r = noPathError(from, to, effectiveStrategy)
+      if (hasTiming) {
+        emitTransform(from, to, null, startTime, false)
       }
-
-      if (options.validatePath === true) {
-        const missing = validatePathMigrations(path)
-        if (missing !== null) {
-          const r = err([
-            createIssue('no_path_found', `forced path is invalid: missing migration "${missing}"`),
-          ])
-          if (hasTiming) {
-            emitTransform(from, to, null, startTime, false)
-          }
-          return r
-        }
-      }
-    } else {
-      const found = resolvePath(from, to, effectiveStrategy)
-      if (found === null || found.length < 2) {
-        const r = noPathError(from, to, effectiveStrategy)
-        if (hasTiming) {
-          emitTransform(from, to, null, startTime, false)
-        }
-        return r
-      }
-      path = found
+      return r
     }
+    const path = found
 
-    return hasTiming
-      ? transformInstrumented(value, from, to, path, options, startTime)
-      : transformCore(value, from, to, path, options)
+    return runTransform(
+      value,
+      from,
+      to,
+      path,
+      options,
+      hasTiming ? makeInstrumentation(from, to, startTime) : undefined,
+    )
   }
 
   function validate(value: unknown, schema: Keys): Promise<ValidateResult<unknown, Keys>> {
@@ -755,7 +821,15 @@ export function createRegistry<Schemas extends SchemaMap>(
     return validateWithSchema(schemaObj, value, schema)
   }
 
-  function explain(from: Keys, to: Keys): ExplainResult<Keys> {
+  function visualize(input?: VisualizeInput): string {
+    return visualizeRegistry(graph, input)
+  }
+
+  function explain(
+    from: Keys,
+    to: Keys,
+    options?: { readonly pathStrategy?: PathStrategy | undefined },
+  ): ExplainResult<Keys> {
     if (from === to) {
       return {
         from,
@@ -767,7 +841,7 @@ export function createRegistry<Schemas extends SchemaMap>(
       }
     }
 
-    const path = resolvePath(from, to)
+    const path = resolvePath(from, to, options?.pathStrategy)
     if (path === null || path.length < 2) {
       const reachable = [...reachableFrom(graph, from)].toSorted()
       const rev = reverseGraph(graph)
@@ -841,7 +915,15 @@ export function createRegistry<Schemas extends SchemaMap>(
 
     // function form: call it directly, verify the key is known
     if (typeof identifyConfig === 'function') {
-      const key = identifyConfig(value) as Keys | null
+      // B4/I3: a throwing identify function must surface as a Result, not reject.
+      // oxlint-disable-next-line init-declarations -- assigned in try, used after; restructure would obscure the error path
+      let key: Keys | null
+      try {
+        key = identifyConfig(value) as Keys | null
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return err([createIssue('identify_failed', `identify function threw: ${message}`)])
+      }
       if (key === null || !has(key)) {
         return err([createIssue('identify_failed', 'no schema matched the provided value')])
       }
@@ -860,7 +942,14 @@ export function createRegistry<Schemas extends SchemaMap>(
         tryParseKeys.push(key)
         continue
       }
-      if ((guard as IdentifyGuard)(value)) {
+      // B4: a throwing guard must not crash identify.
+      let matched = false
+      try {
+        matched = (guard as IdentifyGuard)(value)
+      } catch {
+        matched = false
+      }
+      if (matched) {
         return ok(key, { schema: key })
       }
     }
@@ -875,9 +964,23 @@ export function createRegistry<Schemas extends SchemaMap>(
           if (schema === undefined) {
             return null
           }
-          const validation = schema['~standard'].validate(value)
-          const outcome = validation instanceof Promise ? await validation : validation
-          return outcome.issues === undefined ? key : null
+          // B4: validate may throw; treat throws as "did not match".
+          // oxlint-disable-next-line init-declarations -- assigned in try, used after; restructure would obscure the error path
+          let validation: unknown
+          try {
+            validation = schema['~standard'].validate(value)
+          } catch {
+            return null
+          }
+          // T11: detect thenables, not just real Promises.
+          const outcome = isThenable(validation) ? await validation : validation
+          // T12: defensively check the result shape before reading issues.
+          return outcome !== null &&
+            typeof outcome === 'object' &&
+            !('issues' in outcome) &&
+            'value' in outcome
+            ? key
+            : null
         }),
       )
 
@@ -929,10 +1032,12 @@ export function createRegistry<Schemas extends SchemaMap>(
     transform,
     validate,
     has,
-    hasMigration: (from: Keys, to: Keys) => migrations.has(`${from}->${to}`),
+    hasMigration: (from: Keys, to: Keys) =>
+      has(from) && has(to) && migrations.has(`${from}->${to}`),
     findPath: resolvePath,
     explain,
     schemas,
+    visualize,
   }
 
   if (identifyConfig !== undefined) {

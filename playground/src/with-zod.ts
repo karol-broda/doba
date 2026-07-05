@@ -123,7 +123,7 @@ const userRegistry = createRegistry({
         },
       }
     },
-    'frontend->frontend:v2': (user) => user,
+    'frontend->frontend:v2': { pipe: (p) => p },
     'frontend:v2->frontend': (user) => user,
   },
 
@@ -241,6 +241,9 @@ async function main() {
   if (!invalidResult.ok) {
     log(invalidResult.issues, 'validate:frontend:issues')
   }
+
+  const visualization = userRegistry.visualize()
+  console.log(visualization)
 }
 
 main().catch(console.error)

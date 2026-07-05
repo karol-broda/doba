@@ -4,6 +4,19 @@ import type { StandardSchemaV1 } from './standard-schema.js'
 import type { WarningInfo, DefaultedInfo } from './context.js'
 
 /**
+ * detects real Promises *and* thenables. `instanceof Promise` misses values
+ * returned by libraries that produce promise-like objects without using the
+ * global Promise constructor (Effect, some zod configs, custom async adapters).
+ */
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    typeof (value as { then?: unknown }).then === 'function'
+  )
+}
+
+/**
  * strategy for resolving migration paths between schemas.
  * - `'shortest'` finds the optimal path through the migration graph.
  * - `'direct'` only uses a direct migration between two schemas (no intermediaries).
@@ -85,22 +98,49 @@ export async function validateWithSchema<T, Key extends string>(
   value: unknown,
   schemaKey: Key,
 ): Promise<ValidateResult<T, Key>> {
-  const result = schema['~standard'].validate(value)
-  const resolved = result instanceof Promise ? await result : result
-
-  if (resolved.issues !== undefined) {
-    const issues: DobaIssue[] = resolved.issues.map((issue) => {
-      const path = issue.path?.map((p) =>
-        typeof p === 'object' && p !== null && 'key' in p ? p.key : p,
-      )
-      return createIssue(
-        'validation_failed',
-        issue.message,
-        path === undefined ? undefined : { path },
-      )
-    })
-    return err(issues)
+  let result: unknown
+  try {
+    result = schema['~standard'].validate(value)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return err([createIssue('validation_failed', `schema "${schemaKey}" threw: ${message}`)])
   }
 
-  return ok(resolved.value, { schema: schemaKey })
+  const resolved = isThenable(result) ? await result : result
+
+  if (resolved !== null && typeof resolved === 'object' && 'issues' in resolved) {
+    const rawIssues = (resolved as { issues?: unknown }).issues
+    if (rawIssues !== undefined) {
+      if (!Array.isArray(rawIssues)) {
+        return err([
+          createIssue('validation_failed', `schema "${schemaKey}" returned non-array issues`),
+        ])
+      }
+      const issues: DobaIssue[] = rawIssues.map((issue) => {
+        const issueObj = issue as { message?: string; path?: readonly unknown[] }
+        const path = issueObj.path?.map((p) =>
+          typeof p === 'object' && p !== null && 'key' in p ? (p as { key: unknown }).key : p,
+        )
+        return createIssue(
+          'validation_failed',
+          issueObj.message ?? 'validation failed',
+          path === undefined ? undefined : { path },
+        )
+      })
+      return err(issues)
+    }
+  }
+
+  if (resolved !== null && typeof resolved === 'object' && 'value' in resolved) {
+    return ok((resolved as { value: T }).value, { schema: schemaKey })
+  }
+
+  // malformed result (no value, no issues): treat as a validation failure
+  // rather than silently succeeding with undefined.
+  return err([
+    createIssue(
+      'validation_failed',
+      `schema "${schemaKey}" returned a malformed result (no "value" or "issues" field)`,
+    ),
+  ])
 }
